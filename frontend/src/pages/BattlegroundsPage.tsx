@@ -25,6 +25,7 @@ interface BattleTab {
   battleId?: string;
   deckId?: string;
   snapshotHeroes?: OwnedHeroCard[];
+  timerMs?: number;
 }
 
 /**
@@ -50,9 +51,9 @@ function BattlegroundsContent() {
   const { data: battles, isLoading: battlesLoading } = useGetAllBattleResults();
   
   const heroesContext = useHeroes();
-  const economyContext = useEconomy();
-  const telemetryContext = useTelemetry();
-  const progressContext = useProgress();
+  const { earnMythex, earnResources } = useEconomy();
+  const { recordBattleOutcome } = useTelemetry();
+  const { registerBattleResult } = useProgress();
   
   // Tab management
   const [activeTab, setActiveTab] = useState<string>('waiting');
@@ -119,9 +120,9 @@ function BattlegroundsContent() {
       console.log('[BattlegroundsPage] Component mounted - initial render count:', renderCountRef.current);
       console.log('[BattlegroundsPage] Context availability:', {
         heroes: !!heroesContext,
-        economy: !!economyContext,
-        telemetry: !!telemetryContext,
-        progress: !!progressContext,
+        economy: !!earnMythex,
+        telemetry: !!recordBattleOutcome,
+        progress: !!registerBattleResult,
       });
     }
     
@@ -187,10 +188,15 @@ function BattlegroundsContent() {
       }
 
       // PRIORITY 1: Create deep snapshot of heroes at battle start
-      const deckHeroes = heroesContext.heroes.filter(h => 
+      const deckHeroes = heroesContext.heroes.filter(h =>
         selectedDeck.cardInstanceIds.includes(h.instanceId)
       );
-      
+
+      if (deckHeroes.length < 7) {
+        setError('Deck must have at least 7 cards to battle. Cards may have been removed.');
+        return;
+      }
+
       // Deep clone to completely isolate from live hero state
       const snapshotHeroes = JSON.parse(JSON.stringify(deckHeroes)) as OwnedHeroCard[];
 
@@ -205,12 +211,15 @@ function BattlegroundsContent() {
         });
       }
 
+      const timerMs = timerOption === 'fast' ? 30000 : timerOption === 'normal' ? 60000 : timerOption === 'slow' ? 120000 : undefined;
+
       const newTab: BattleTab = {
         id: battleId,
         type: 'active-battle',
         battleId,
         deckId: selectedDeckId,
         snapshotHeroes,
+        timerMs,
       };
 
       setBattleTabs(prev => [...prev, newTab]);
@@ -290,30 +299,30 @@ function BattlegroundsContent() {
       if (import.meta.env.DEV) {
         console.debug('[BattlegroundsPage] Granting Mythex:', mythexReward);
       }
-      economyContext.earnMythex(mythexReward, 'Battle Reward');
-      
+      earnMythex(mythexReward, 'Battle Reward');
+
       // Context update 3: Economy (Resources)
       if (victory) {
         if (import.meta.env.DEV) {
           console.debug('[BattlegroundsPage] Granting victory resources:', resourceAmount);
         }
-        economyContext.earnResources({ 
-          gold: resourceAmount, 
-          stone: resourceAmount, 
-          lumber: resourceAmount, 
-          iron: resourceAmount, 
-          food: resourceAmount 
+        earnResources({
+          gold: resourceAmount,
+          stone: resourceAmount,
+          lumber: resourceAmount,
+          iron: resourceAmount,
+          food: resourceAmount
         }, 'Battle Victory');
       } else {
         if (import.meta.env.DEV) {
           console.debug('[BattlegroundsPage] Granting participation resources:', resourceAmount);
         }
-        economyContext.earnResources({ 
-          gold: resourceAmount, 
-          stone: resourceAmount, 
-          lumber: resourceAmount, 
-          iron: resourceAmount, 
-          food: resourceAmount 
+        earnResources({
+          gold: resourceAmount,
+          stone: resourceAmount,
+          lumber: resourceAmount,
+          iron: resourceAmount,
+          food: resourceAmount
         }, 'Battle Participation');
       }
 
@@ -321,36 +330,42 @@ function BattlegroundsContent() {
       if (import.meta.env.DEV) {
         console.debug('[BattlegroundsPage] Recording telemetry');
       }
-      telemetryContext.recordBattleOutcome(battleId, victory, usedHeroOwnedIds);
+      recordBattleOutcome(battleId, victory, usedHeroOwnedIds);
 
       // Context update 5: Progress (Battle result)
       if (import.meta.env.DEV) {
         console.debug('[BattlegroundsPage] Registering with progression system');
       }
-      progressContext.registerBattleResult(victory);
+      registerBattleResult(victory);
 
       if (import.meta.env.DEV) {
         console.debug('[BattlegroundsPage] Battle rewards granted successfully - Phase: Complete');
       }
 
       // PRIORITY 1: Move battle tab to finished after delay - decoupled from context updates
+      // Guard: skip if user already manually closed the tab (Return to Lobby)
       setTimeout(() => {
-        if (import.meta.env.DEV) {
-          console.debug('[BattlegroundsPage] Moving battle to finished tab - Phase: Cleanup');
-        }
-        setBattleTabs(prev => prev.map(tab => 
-          tab.battleId === battleId 
-            ? { ...tab, type: 'finished' }
-            : tab
-        ));
-        setActiveBattleId(null);
-        setActiveTab('finished');
+        setBattleTabs(prev => {
+          const tabExists = prev.some(tab => tab.battleId === battleId && tab.type === 'active-battle');
+          if (!tabExists) return prev; // Tab was already closed or moved
+
+          if (import.meta.env.DEV) {
+            console.debug('[BattlegroundsPage] Moving battle to finished tab - Phase: Cleanup');
+          }
+          return prev.map(tab =>
+            tab.battleId === battleId
+              ? { ...tab, type: 'finished' as const }
+              : tab
+          );
+        });
+        setActiveBattleId(prev => prev === battleId ? null : prev);
+        setActiveTab(prev => prev === battleId ? 'finished' : prev);
       }, 2000);
     } catch (err) {
       console.error('[BattlegroundsPage] Error completing battle:', err);
       setError('Failed to process battle results. Rewards may not have been granted.');
     }
-  }, [heroesContext, economyContext, telemetryContext, progressContext]);
+  }, [heroesContext.awardXpToHeroes, earnMythex, earnResources, recordBattleOutcome, registerBattleResult]);
 
   /**
    * PRIORITY 1: Stable callback with useCallback - Close battle tab and cleanup.
@@ -389,7 +404,7 @@ function BattlegroundsContent() {
     setShowCreateDialog(open);
   }, []);
 
-  if (!heroesContext || !economyContext || !telemetryContext || !progressContext) {
+  if (!heroesContext) {
     return (
       <div className="text-center py-12">
         <Alert className="max-w-2xl mx-auto bg-amber-950/50 border-amber-600/50">
@@ -440,6 +455,7 @@ function BattlegroundsContent() {
           playerName="You"
           onBattleEnd={handleBattleComplete}
           battleId={activeBattleTab.battleId!}
+          timerDuration={activeBattleTab.timerMs}
         />
       </div>
     );

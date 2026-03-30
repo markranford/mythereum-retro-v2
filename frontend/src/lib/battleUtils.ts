@@ -121,6 +121,63 @@ export function buildBattleDeck(
 }
 
 /**
+ * Build an AI opponent deck by selecting random cards from the library.
+ * Matches the player's deck size and approximate power level for fair fights.
+ *
+ * PURE FUNCTION - No side effects, no mutations.
+ */
+export function buildAiDeck(
+  playerDeckSize: number,
+  playerTotalPower: number,
+  ownerName: string
+): BattleDeck {
+  const availableCards = CARD_LIBRARY.filter(c => c.cardType === 'Hero');
+  if (availableCards.length === 0) {
+    // Fallback: use ALL cards if no Hero-typed cards exist
+    const fallback = CARD_LIBRARY.length > 0 ? CARD_LIBRARY : [{ id: 'fallback', name: 'AI Recruit', power: 10, cardType: 'Hero', attack: 5, defense: 5, cost: 3 }];
+    availableCards.push(...(fallback as any[]));
+  }
+  const cards: BattleCard[] = [];
+
+  for (let i = 0; i < playerDeckSize; i++) {
+    const cardData = availableCards[Math.floor(Math.random() * availableCards.length)];
+
+    const attack = cardData.attack || Math.floor(cardData.power / 2) || 1;
+    const defense = cardData.defense || Math.floor(cardData.power / 2) || 1;
+
+    cards.push({
+      id: cardData.id,
+      name: cardData.name,
+      power: cardData.power,
+      cardType: cardData.cardType,
+      description: cardData.description || '',
+      level: 1,
+      xp: 0,
+      edition: cardData.edition || 'Genesis',
+      rarity: cardData.rarity || 'Common',
+      class: cardData.class || 'Warrior',
+      tags: cardData.tags || [],
+      instanceId: `ai-${cardData.id}-${i}`,
+      attack,
+      defense,
+      currentDefense: defense,
+      hp: defense,
+      cost: cardData.manaRequirement?.mana || cardData.cost || 3,
+      manaRequirement: cardData.manaRequirement ? { ...cardData.manaRequirement } : { mana: 3 },
+      isExhausted: false,
+    });
+  }
+
+  const totalPower = cards.reduce((sum, card) => sum + card.attack + card.defense, 0);
+
+  return {
+    cards,
+    totalPower,
+    ownerName,
+  };
+}
+
+/**
  * Initialize a new battle with two decks.
  * 
  * PURE FUNCTION - No side effects, no mutations.
@@ -194,51 +251,84 @@ export function simulateBattleRound(battle: Battle): Battle {
     return next;
   }
   
-  // Select random attacker and defender
-  const attacker = deck1Cards[Math.floor(Math.random() * deck1Cards.length)];
-  const defender = deck2Cards[Math.floor(Math.random() * deck2Cards.length)];
-  
-  // Calculate damage: attacker.attack vs defender.defense
-  // Defense provides 50% mitigation (defender.defense / 2)
-  const baseDamage = attacker.attack;
-  const mitigatedDamage = Math.max(0, baseDamage - Math.floor(defender.defense / 2));
-  const actualDamage = Math.max(1, mitigatedDamage); // Minimum 1 damage to ensure progress
-  
-  // Apply damage to defender
-  const defenderIndex = next.deck2.cards.findIndex(c => c.instanceId === defender.instanceId);
-  if (defenderIndex !== -1) {
-    // Deep clone the card before mutation
-    next.deck2.cards[defenderIndex] = deepCloneCard(next.deck2.cards[defenderIndex]);
-    next.deck2.cards[defenderIndex].currentDefense -= actualDamage;
-    
-    const defenderDestroyed = next.deck2.cards[defenderIndex].currentDefense <= 0;
-    
-    // Record event for UI display
-    next.lastEvent = {
-      attacker: attacker.name,
-      defender: defender.name,
-      damage: actualDamage,
-      defenderDestroyed,
-    };
-    
-    // Add to battle log
-    if (defenderDestroyed) {
+  // === PHASE 1: Deck 1 attacks Deck 2 ===
+  const attacker1 = deck1Cards[Math.floor(Math.random() * deck1Cards.length)];
+  const defender1 = deck2Cards[Math.floor(Math.random() * deck2Cards.length)];
+
+  const baseDmg1 = attacker1.attack;
+  const mitigated1 = Math.max(0, baseDmg1 - Math.floor(defender1.defense / 2));
+  const dmg1 = Math.max(1, mitigated1);
+
+  const defIdx1 = next.deck2.cards.findIndex(c => c.instanceId === defender1.instanceId);
+  let defender1Destroyed = false;
+  if (defIdx1 !== -1) {
+    next.deck2.cards[defIdx1] = deepCloneCard(next.deck2.cards[defIdx1]);
+    next.deck2.cards[defIdx1].currentDefense -= dmg1;
+    defender1Destroyed = next.deck2.cards[defIdx1].currentDefense <= 0;
+
+    if (defender1Destroyed) {
       next.log.push({
-        message: `${attacker.name} attacks ${defender.name} for ${actualDamage} damage - ${defender.name} is destroyed!`,
+        message: `${attacker1.name} attacks ${defender1.name} for ${dmg1} damage - ${defender1.name} is destroyed!`,
         category: 'combat',
       });
     } else {
       next.log.push({
-        message: `${attacker.name} attacks ${defender.name} for ${actualDamage} damage (${next.deck2.cards[defenderIndex].currentDefense} HP remaining)`,
+        message: `${attacker1.name} attacks ${defender1.name} for ${dmg1} damage (${next.deck2.cards[defIdx1].currentDefense} HP remaining)`,
         category: 'combat',
       });
     }
   }
-  
+
+  // === PHASE 2: Deck 2 counterattacks Deck 1 ===
+  const liveDeck2 = next.deck2.cards.filter(c => c.currentDefense > 0);
+  const liveDeck1 = next.deck1.cards.filter(c => c.currentDefense > 0);
+
+  let attacker2Name = '';
+  let defender2Name = '';
+  let dmg2 = 0;
+  let defender2Destroyed = false;
+
+  if (liveDeck2.length > 0 && liveDeck1.length > 0) {
+    const attacker2 = liveDeck2[Math.floor(Math.random() * liveDeck2.length)];
+    const defender2 = liveDeck1[Math.floor(Math.random() * liveDeck1.length)];
+
+    const baseDmg2 = attacker2.attack;
+    const mitigated2 = Math.max(0, baseDmg2 - Math.floor(defender2.defense / 2));
+    dmg2 = Math.max(1, mitigated2);
+    attacker2Name = attacker2.name;
+    defender2Name = defender2.name;
+
+    const defIdx2 = next.deck1.cards.findIndex(c => c.instanceId === defender2.instanceId);
+    if (defIdx2 !== -1) {
+      next.deck1.cards[defIdx2] = deepCloneCard(next.deck1.cards[defIdx2]);
+      next.deck1.cards[defIdx2].currentDefense -= dmg2;
+      defender2Destroyed = next.deck1.cards[defIdx2].currentDefense <= 0;
+
+      if (defender2Destroyed) {
+        next.log.push({
+          message: `${attacker2Name} attacks ${defender2Name} for ${dmg2} damage - ${defender2Name} is destroyed!`,
+          category: 'combat',
+        });
+      } else {
+        next.log.push({
+          message: `${attacker2Name} attacks ${defender2Name} for ${dmg2} damage (${next.deck1.cards[defIdx2].currentDefense} HP remaining)`,
+          category: 'combat',
+        });
+      }
+    }
+  }
+
+  // Record last event for UI (show the most dramatic event)
+  next.lastEvent = defender1Destroyed
+    ? { attacker: attacker1.name, defender: defender1.name, damage: dmg1, defenderDestroyed: true }
+    : defender2Destroyed
+    ? { attacker: attacker2Name, defender: defender2Name, damage: dmg2, defenderDestroyed: true }
+    : { attacker: attacker1.name, defender: defender1.name, damage: dmg1, defenderDestroyed: false };
+
   // Increment turn counter
   next.turn += 1;
-  
-  // Check victory conditions again after combat
+
+  // Check victory conditions after both attacks
   const remainingDeck1 = next.deck1.cards.filter(c => c.currentDefense > 0);
   const remainingDeck2 = next.deck2.cards.filter(c => c.currentDefense > 0);
   

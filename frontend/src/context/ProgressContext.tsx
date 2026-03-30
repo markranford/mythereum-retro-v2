@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { PlayerProgress, GameLayer, DEFAULT_UNLOCK_THRESHOLDS } from '../types/progression';
 import { useAccount } from './AccountContext';
 
@@ -49,6 +49,8 @@ export function ProgressProvider({ children }: { children: React.ReactNode }) {
   
   // PRIORITY 2: Use ref to prevent circular updates
   const isUpdatingRef = useRef(false);
+  const progressRef = useRef<PlayerProgress | null>(null);
+  const accountRef = useRef(account);
 
   // PRIORITY 3: Diagnostic logging
   const renderCountRef = useRef(0);
@@ -58,6 +60,10 @@ export function ProgressProvider({ children }: { children: React.ReactNode }) {
       console.debug('[ProgressContext] Render count:', renderCountRef.current);
     }
   }
+
+  // Keep refs in sync with state
+  useEffect(() => { progressRef.current = progress; }, [progress]);
+  useEffect(() => { accountRef.current = account; }, [account]);
 
   // Initialize or load progress when account changes - only once
   useEffect(() => {
@@ -178,7 +184,7 @@ export function ProgressProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const registerHeroCount = useCallback((count: number) => {
-    if (!progress || !account) {
+    if (!progressRef.current || !accountRef.current) {
       console.warn('[ProgressContext] Cannot register hero count: no progress or account');
       return;
     }
@@ -188,17 +194,17 @@ export function ProgressProvider({ children }: { children: React.ReactNode }) {
     }
 
     setProgress(prev => {
-      if (!prev) return prev;
-      
+      if (!prev || prev.heroesOwned === count) return prev;
+
       return {
         ...prev,
         heroesOwned: count,
       };
     });
-  }, [progress, account]);
+  }, []);
 
   const registerBattleResult = useCallback((won: boolean) => {
-    if (!progress || !account) {
+    if (!progressRef.current || !accountRef.current) {
       console.warn('[ProgressContext] Cannot register battle result: no progress or account');
       return;
     }
@@ -209,17 +215,17 @@ export function ProgressProvider({ children }: { children: React.ReactNode }) {
 
     setProgress(prev => {
       if (!prev) return prev;
-      
+
       return {
         ...prev,
         battlesWon: won ? prev.battlesWon + 1 : prev.battlesWon,
         battlesLost: won ? prev.battlesLost : prev.battlesLost + 1,
       };
     });
-  }, [progress, account]);
+  }, []);
 
   const registerTournamentResult = useCallback((won: boolean) => {
-    if (!progress || !account) {
+    if (!progressRef.current || !accountRef.current) {
       console.warn('[ProgressContext] Cannot register tournament result: no progress or account');
       return;
     }
@@ -230,28 +236,28 @@ export function ProgressProvider({ children }: { children: React.ReactNode }) {
 
     setProgress(prev => {
       if (!prev) return prev;
-      
+
       return {
         ...prev,
         tournamentsParticipated: prev.tournamentsParticipated + 1,
         tournamentsWon: won ? prev.tournamentsWon + 1 : prev.tournamentsWon,
       };
     });
-  }, [progress, account]);
+  }, []);
+
+  const contextValue = useMemo(() => ({
+    progress,
+    isLayerUnlocked,
+    registerHeroCount,
+    registerBattleResult,
+    registerTournamentResult,
+    getUnlockRequirements,
+    isInitialized,
+    initializationError,
+  }), [progress, isLayerUnlocked, registerHeroCount, registerBattleResult, registerTournamentResult, getUnlockRequirements, isInitialized, initializationError]);
 
   return (
-    <ProgressContext.Provider
-      value={{
-        progress,
-        isLayerUnlocked,
-        registerHeroCount,
-        registerBattleResult,
-        registerTournamentResult,
-        getUnlockRequirements,
-        isInitialized,
-        initializationError,
-      }}
-    >
+    <ProgressContext.Provider value={contextValue}>
       {children}
     </ProgressContext.Provider>
   );

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Battle } from '../../types/battle';
 import { OwnedHeroCard } from '../../types/heroes';
-import { buildBattleDeck, initializeBattle, simulateBattleRound } from '../../lib/battleUtils';
+import { buildBattleDeck, buildAiDeck, initializeBattle, simulateBattleRound } from '../../lib/battleUtils';
 import { Button } from '../ui/button';
 import { Card, CardContent } from '../ui/card';
 import BattleLog from './BattleLog';
@@ -103,9 +103,9 @@ export default function GameBoard({
       console.debug('[GameBoard] Stored hero IDs for rewards:', usedHeroIdsRef.current.length);
     }
     
-    // Build decks and initialize battle
+    // Build player deck and distinct AI opponent deck
     const deck1 = buildBattleDeck(playerDeck, playerName);
-    const deck2 = buildBattleDeck(playerDeck, 'AI Opponent');
+    const deck2 = buildAiDeck(deck1.cards.length, deck1.totalPower, 'AI Opponent');
     const initialBattle = initializeBattle(deck1, deck2);
     
     setBattle(initialBattle);

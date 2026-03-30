@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { TelemetrySummary, BalanceEngineParams, CardTelemetryCounters } from '../types/balancer';
 import { useHeroes } from './HeroesContext';
 
@@ -77,11 +77,14 @@ export function TelemetryProvider({ children }: { children: React.ReactNode }) {
     return DEFAULT_ENGINE_PARAMS;
   });
 
-  // Helper to get cardId from ownedHeroId
+  // Helper to get cardId from ownedHeroId - use ref for stable callback
+  const heroesRef = useRef(heroes);
+  useEffect(() => { heroesRef.current = heroes; }, [heroes]);
+
   const getCardIdByOwnedHeroId = useCallback((ownedHeroId: string): string | null => {
-    const hero = heroes.find(h => h.instanceId === ownedHeroId);
+    const hero = heroesRef.current.find(h => h.instanceId === ownedHeroId);
     return hero?.cardId || null;
-  }, [heroes]);
+  }, []);
 
   // PRIORITY 2: Debounced localStorage writes (300ms) to prevent excessive writes
   useEffect(() => {
@@ -176,16 +179,16 @@ export function TelemetryProvider({ children }: { children: React.ReactNode }) {
     setEngineParams(DEFAULT_ENGINE_PARAMS);
   }, []);
 
+  const contextValue = useMemo(() => ({
+    summary,
+    engineParams,
+    recordBattleOutcome,
+    updateEngineParams,
+    resetTelemetry,
+  }), [summary, engineParams, recordBattleOutcome, updateEngineParams, resetTelemetry]);
+
   return (
-    <TelemetryContext.Provider
-      value={{
-        summary,
-        engineParams,
-        recordBattleOutcome,
-        updateEngineParams,
-        resetTelemetry,
-      }}
-    >
+    <TelemetryContext.Provider value={contextValue}>
       {children}
     </TelemetryContext.Provider>
   );

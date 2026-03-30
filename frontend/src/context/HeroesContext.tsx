@@ -355,31 +355,31 @@ export function HeroesProvider({ children }: { children: React.ReactNode }) {
     // No-op - kept for compatibility
   }, []);
 
+  const contextValue = useMemo(() => ({
+    heroes,
+    decks,
+    decksWithPower,
+    activeDeckId,
+    setActiveDeckId,
+    createDeck,
+    deleteDeck,
+    renameDeck,
+    updateDeck,
+    addCardToDeck,
+    removeCardFromDeck,
+    awardXpToHeroes,
+    recruitRandomHero,
+    addHero,
+    removeCard,
+    getDuplicatesByCardId,
+    canForge,
+    forgeHeroes,
+    getDeckPower,
+    ensureStarterCollection,
+  }), [heroes, decks, decksWithPower, activeDeckId, setActiveDeckId, createDeck, deleteDeck, renameDeck, updateDeck, addCardToDeck, removeCardFromDeck, awardXpToHeroes, recruitRandomHero, addHero, removeCard, getDuplicatesByCardId, canForge, forgeHeroes, getDeckPower, ensureStarterCollection]);
+
   return (
-    <HeroesContext.Provider
-      value={{
-        heroes,
-        decks,
-        decksWithPower,
-        activeDeckId,
-        setActiveDeckId,
-        createDeck,
-        deleteDeck,
-        renameDeck,
-        updateDeck,
-        addCardToDeck,
-        removeCardFromDeck,
-        awardXpToHeroes,
-        recruitRandomHero,
-        addHero,
-        removeCard,
-        getDuplicatesByCardId,
-        canForge,
-        forgeHeroes,
-        getDeckPower,
-        ensureStarterCollection,
-      }}
-    >
+    <HeroesContext.Provider value={contextValue}>
       {children}
     </HeroesContext.Provider>
   );

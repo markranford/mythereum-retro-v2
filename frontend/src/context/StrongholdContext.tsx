@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Stronghold, Resources, BuildingInstance } from '../types/strongholds';
 import { createStarterStronghold, BUILDING_TEMPLATES, NPC_RAID_TARGETS } from '../lib/strongholdMockData';
 import { getZoneFromIndex } from '../lib/hexMath';
@@ -65,6 +65,9 @@ export function StrongholdProvider({ children }: { children: React.ReactNode }) 
     return null;
   });
 
+  const strongholdRef = useRef(stronghold);
+  useEffect(() => { strongholdRef.current = stronghold; }, [stronghold]);
+
   // Save to localStorage whenever stronghold changes
   useEffect(() => {
     if (stronghold) {
@@ -76,17 +79,18 @@ export function StrongholdProvider({ children }: { children: React.ReactNode }) 
 
   // Phase 10: Calculate accumulated production
   const getAccumulatedProduction = useCallback((): Resources => {
-    if (!stronghold) {
+    const sh = strongholdRef.current;
+    if (!sh) {
       return { gold: 0, stone: 0, lumber: 0, iron: 0, food: 0, mana: 0 };
     }
 
     const now = Date.now();
-    const lastCollection = stronghold.lastProductionCollection || stronghold.lastTickTime;
+    const lastCollection = sh.lastProductionCollection || sh.lastTickTime;
     const hoursElapsed = (now - lastCollection) / (1000 * 60 * 60);
 
     const production: Resources = { gold: 0, stone: 0, lumber: 0, iron: 0, food: 0, mana: 0 };
-    
-    Object.entries(stronghold.buildings).forEach(([, building]) => {
+
+    Object.entries(sh.buildings).forEach(([, building]) => {
       const template = BUILDING_TEMPLATES[building.templateId];
       if (template.baseProduction) {
         Object.entries(template.baseProduction).forEach(([resource, baseAmount]) => {
@@ -99,11 +103,11 @@ export function StrongholdProvider({ children }: { children: React.ReactNode }) 
     });
 
     return production;
-  }, [stronghold]);
+  }, []);
 
   // Phase 10: Collect production and add to economy
   const collectProduction = useCallback(() => {
-    if (!stronghold) return;
+    if (!strongholdRef.current) return;
 
     const production = getAccumulatedProduction();
     const now = Date.now();
@@ -112,149 +116,141 @@ export function StrongholdProvider({ children }: { children: React.ReactNode }) 
     economyEarnResources(production, 'Building Production');
 
     // Update last collection time
-    setStronghold({
-      ...stronghold,
-      lastProductionCollection: now,
-      activityLog: [
-        {
-          timestamp: now,
-          type: 'production',
-          message: `Production collected! +${production.gold}g, +${production.stone}s, +${production.lumber}l, +${production.iron}i, +${production.food}f, +${production.mana}m`,
-        },
-        ...stronghold.activityLog.slice(0, 19),
-      ],
+    setStronghold(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        lastProductionCollection: now,
+        activityLog: [
+          {
+            timestamp: now,
+            type: 'production',
+            message: `Production collected! +${production.gold}g, +${production.stone}s, +${production.lumber}l, +${production.iron}i, +${production.food}f, +${production.mana}m`,
+          },
+          ...prev.activityLog.slice(0, 19),
+        ],
+      };
     });
-  }, [stronghold, getAccumulatedProduction, economyEarnResources]);
+  }, [getAccumulatedProduction, economyEarnResources]);
 
   // Calculate resource production based on elapsed time
   const applyTickNow = useCallback(() => {
-    if (!stronghold) return;
+    setStronghold(prev => {
+      if (!prev) return prev;
+      const now = Date.now();
+      const hoursElapsed = (now - prev.lastTickTime) / (1000 * 60 * 60);
 
-    const now = Date.now();
-    const hoursElapsed = (now - stronghold.lastTickTime) / (1000 * 60 * 60);
+      const newResources = { ...prev.resources };
 
-    const newResources = { ...stronghold.resources };
-    
-    Object.entries(stronghold.buildings).forEach(([, building]) => {
-      const template = BUILDING_TEMPLATES[building.templateId];
-      if (template.baseProduction) {
-        Object.entries(template.baseProduction).forEach(([resource, baseAmount]) => {
-          if (baseAmount) {
-            const production = baseAmount * building.level * hoursElapsed;
-            newResources[resource as keyof Resources] += Math.floor(production);
-          }
-        });
-      }
+      Object.entries(prev.buildings).forEach(([, building]) => {
+        const template = BUILDING_TEMPLATES[building.templateId];
+        if (template.baseProduction) {
+          Object.entries(template.baseProduction).forEach(([resource, baseAmount]) => {
+            if (baseAmount) {
+              const production = baseAmount * building.level * hoursElapsed;
+              newResources[resource as keyof Resources] += Math.floor(production);
+            }
+          });
+        }
+      });
+
+      return {
+        ...prev,
+        resources: newResources,
+        lastTickTime: now,
+        activityLog: [
+          {
+            timestamp: now,
+            type: 'production',
+            message: `Resources collected! +${Math.floor(hoursElapsed * 60)} minutes of production`,
+          },
+          ...prev.activityLog.slice(0, 19),
+        ],
+      };
     });
-
-    setStronghold({
-      ...stronghold,
-      resources: newResources,
-      lastTickTime: now,
-      activityLog: [
-        {
-          timestamp: now,
-          type: 'production',
-          message: `Resources collected! +${Math.floor(hoursElapsed * 60)} minutes of production`,
-        },
-        ...stronghold.activityLog.slice(0, 19),
-      ],
-    });
-  }, [stronghold]);
+  }, []);
 
   // Start building upgrade
   const startUpgrade = useCallback((buildingId: string): boolean => {
-    if (!stronghold) return false;
+    const sh = strongholdRef.current;
+    if (!sh) return false;
 
-    const building = stronghold.buildings[buildingId];
+    const building = sh.buildings[buildingId];
     if (!building || building.upgrading) return false;
 
     const template = BUILDING_TEMPLATES[building.templateId];
     const cost = template.upgradeCost;
 
-    // Check if player has enough resources in economy
     const canAfford = Object.entries(cost).every(
-      ([resource, amount]) => stronghold.resources[resource as keyof Resources] >= amount
+      ([resource, amount]) => sh.resources[resource as keyof Resources] >= amount
     );
 
     if (!canAfford) return false;
 
-    const now = Date.now();
-    const upgradeCompleteTime = now + template.upgradeTime * 60 * 60 * 1000;
+    setStronghold(prev => {
+      if (!prev) return prev;
+      const b = prev.buildings[buildingId];
+      if (!b) return prev;
 
-    // Deduct resources
-    const newResources = { ...stronghold.resources };
-    Object.entries(cost).forEach(([resource, amount]) => {
-      newResources[resource as keyof Resources] -= amount;
-    });
+      const now = Date.now();
+      const upgradeCompleteTime = now + template.upgradeTime * 60 * 60 * 1000;
+      const newResources = { ...prev.resources };
+      Object.entries(cost).forEach(([resource, amount]) => {
+        newResources[resource as keyof Resources] -= amount;
+      });
 
-    setStronghold({
-      ...stronghold,
-      resources: newResources,
-      buildings: {
-        ...stronghold.buildings,
-        [buildingId]: {
-          ...building,
-          upgrading: true,
-          upgradeStartTime: now,
-          upgradeCompleteTime,
+      return {
+        ...prev,
+        resources: newResources,
+        buildings: {
+          ...prev.buildings,
+          [buildingId]: { ...b, upgrading: true, upgradeStartTime: now, upgradeCompleteTime },
         },
-      },
-      activityLog: [
-        {
-          timestamp: now,
-          type: 'upgrade',
-          message: `Started upgrading ${template.name} to level ${building.level + 1}`,
-        },
-        ...stronghold.activityLog.slice(0, 19),
-      ],
+        activityLog: [
+          { timestamp: now, type: 'upgrade', message: `Started upgrading ${template.name} to level ${b.level + 1}` },
+          ...prev.activityLog.slice(0, 19),
+        ],
+      };
     });
 
     return true;
-  }, [stronghold]);
+  }, []);
 
   // Finish ready upgrades
   const finishReadyUpgrades = useCallback(() => {
-    if (!stronghold) return;
+    setStronghold(prev => {
+      if (!prev) return prev;
+      const now = Date.now();
+      let updated = false;
+      const newBuildings = { ...prev.buildings };
+      const newLogs = [...prev.activityLog];
 
-    const now = Date.now();
-    let updated = false;
-    const newBuildings = { ...stronghold.buildings };
-    const newLogs = [...stronghold.activityLog];
-
-    Object.entries(newBuildings).forEach(([buildingId, building]) => {
-      if (building.upgrading && building.upgradeCompleteTime && building.upgradeCompleteTime <= now) {
-        const template = BUILDING_TEMPLATES[building.templateId];
-        newBuildings[buildingId] = {
-          ...building,
-          level: building.level + 1,
-          upgrading: false,
-          upgradeStartTime: undefined,
-          upgradeCompleteTime: undefined,
-        };
-        newLogs.unshift({
-          timestamp: now,
-          type: 'upgrade',
-          message: `${template.name} upgraded to level ${building.level + 1}!`,
-        });
-        updated = true;
-      }
-    });
-
-    if (updated) {
-      setStronghold({
-        ...stronghold,
-        buildings: newBuildings,
-        activityLog: newLogs.slice(0, 20),
+      Object.entries(newBuildings).forEach(([buildingId, building]) => {
+        if (building.upgrading && building.upgradeCompleteTime && building.upgradeCompleteTime <= now) {
+          const template = BUILDING_TEMPLATES[building.templateId];
+          newBuildings[buildingId] = {
+            ...building,
+            level: building.level + 1,
+            upgrading: false,
+            upgradeStartTime: undefined,
+            upgradeCompleteTime: undefined,
+          };
+          newLogs.unshift({
+            timestamp: now,
+            type: 'upgrade',
+            message: `${template.name} upgraded to level ${building.level + 1}!`,
+          });
+          updated = true;
+        }
       });
-    }
-  }, [stronghold]);
+
+      if (!updated) return prev;
+      return { ...prev, buildings: newBuildings, activityLog: newLogs.slice(0, 20) };
+    });
+  }, []);
 
   // NPC Trade
   const performTradeWithNpc = useCallback((offerId: string) => {
-    if (!stronghold) return;
-
-    const now = Date.now();
     const trades = [
       { id: 'trade1', give: { gold: 50 }, receive: { stone: 100 } },
       { id: 'trade2', give: { stone: 80 }, receive: { lumber: 120 } },
@@ -264,245 +260,174 @@ export function StrongholdProvider({ children }: { children: React.ReactNode }) 
     const trade = trades.find(t => t.id === offerId);
     if (!trade) return;
 
-    // Check if can afford
-    const canAfford = Object.entries(trade.give).every(
-      ([resource, amount]) => stronghold.resources[resource as keyof Resources] >= amount
-    );
+    setStronghold(prev => {
+      if (!prev) return prev;
+      const canAfford = Object.entries(trade.give).every(
+        ([resource, amount]) => prev.resources[resource as keyof Resources] >= amount
+      );
+      if (!canAfford) return prev;
 
-    if (!canAfford) return;
+      const now = Date.now();
+      const newResources = { ...prev.resources };
+      Object.entries(trade.give).forEach(([resource, amount]) => {
+        newResources[resource as keyof Resources] -= amount;
+      });
+      Object.entries(trade.receive).forEach(([resource, amount]) => {
+        newResources[resource as keyof Resources] += amount;
+      });
 
-    const newResources = { ...stronghold.resources };
-    Object.entries(trade.give).forEach(([resource, amount]) => {
-      newResources[resource as keyof Resources] -= amount;
+      return {
+        ...prev,
+        resources: newResources,
+        activityLog: [
+          { timestamp: now, type: 'trade', message: `Trade completed with NPC merchant` },
+          ...prev.activityLog.slice(0, 19),
+        ],
+      };
     });
-    Object.entries(trade.receive).forEach(([resource, amount]) => {
-      newResources[resource as keyof Resources] += amount;
-    });
-
-    setStronghold({
-      ...stronghold,
-      resources: newResources,
-      activityLog: [
-        {
-          timestamp: now,
-          type: 'trade',
-          message: `Trade completed with NPC merchant`,
-        },
-        ...stronghold.activityLog.slice(0, 19),
-      ],
-    });
-  }, [stronghold]);
+  }, []);
 
   // Launch Raid with deck power integration
   const launchRaid = useCallback((targetId: string, raidDeckPower?: number) => {
-    if (!stronghold) return;
-
     const target = NPC_RAID_TARGETS.find(t => t.id === targetId);
     if (!target) return;
 
-    const now = Date.now();
-    
-    // Calculate stronghold level (sum of all building levels)
-    const strongholdLevel = Object.values(stronghold.buildings).reduce((sum, b) => sum + b.level, 0);
-    
-    // Calculate military building levels
-    const militaryLevels = Object.values(stronghold.buildings)
-      .filter(b => BUILDING_TEMPLATES[b.templateId].category === 'military')
-      .reduce((sum, b) => sum + b.level, 0);
-    
-    // Calculate effective power with deck bonus
-    const deckBonus = raidDeckPower ? Math.floor(raidDeckPower / 40) : 0;
-    const effectivePower = strongholdLevel + militaryLevels + deckBonus;
-    
-    // Use threat level from target
-    const threatLevel = target.threatLevel || 10;
-    
-    // Calculate win chance (clamped between 20% and 90%)
-    const rawWinChance = effectivePower / (effectivePower + threatLevel);
-    const winChance = Math.max(0.2, Math.min(0.9, rawWinChance));
-    
-    const success = Math.random() < winChance;
+    setStronghold(prev => {
+      if (!prev) return prev;
+      const now = Date.now();
 
-    if (success) {
-      const newResources = { ...stronghold.resources };
-      Object.entries(target.rewards).forEach(([resource, amount]) => {
-        if (amount) {
-          newResources[resource as keyof Resources] += amount;
-        }
-      });
+      const strongholdLevel = Object.values(prev.buildings).reduce((sum, b) => sum + b.level, 0);
+      const militaryLevels = Object.values(prev.buildings)
+        .filter(b => BUILDING_TEMPLATES[b.templateId].category === 'military')
+        .reduce((sum, b) => sum + b.level, 0);
 
-      setStronghold({
-        ...stronghold,
-        resources: newResources,
-        activityLog: [
-          {
-            timestamp: now,
-            type: 'raid',
-            message: `Raid on ${target.name} successful! Plundered resources.${raidDeckPower ? ` (Band Power: ${raidDeckPower})` : ''}`,
-          },
-          ...stronghold.activityLog.slice(0, 19),
-        ],
-      });
-    } else {
-      setStronghold({
-        ...stronghold,
-        activityLog: [
-          {
-            timestamp: now,
-            type: 'raid',
-            message: `Raid on ${target.name} failed. Better luck next time.${raidDeckPower ? ` (Band Power: ${raidDeckPower})` : ''}`,
-          },
-          ...stronghold.activityLog.slice(0, 19),
-        ],
-      });
-    }
-  }, [stronghold]);
+      const deckBonus = raidDeckPower ? Math.floor(raidDeckPower / 40) : 0;
+      const effectivePower = strongholdLevel + militaryLevels + deckBonus;
+      const threatLevel = target.threatLevel || 10;
+      const rawWinChance = effectivePower / (effectivePower + threatLevel);
+      const winChance = Math.max(0.2, Math.min(0.9, rawWinChance));
+      const success = Math.random() < winChance;
+
+      if (success) {
+        const newResources = { ...prev.resources };
+        Object.entries(target.rewards).forEach(([resource, amount]) => {
+          if (amount) newResources[resource as keyof Resources] += amount;
+        });
+        return {
+          ...prev,
+          resources: newResources,
+          activityLog: [
+            { timestamp: now, type: 'raid', message: `Raid on ${target.name} successful! Plundered resources.${raidDeckPower ? ` (Band Power: ${raidDeckPower})` : ''}` },
+            ...prev.activityLog.slice(0, 19),
+          ],
+        };
+      } else {
+        return {
+          ...prev,
+          activityLog: [
+            { timestamp: now, type: 'raid', message: `Raid on ${target.name} failed. Better luck next time.${raidDeckPower ? ` (Band Power: ${raidDeckPower})` : ''}` },
+            ...prev.activityLog.slice(0, 19),
+          ],
+        };
+      }
+    });
+  }, []);
 
   // Alliance management
   const joinAlliance = useCallback((allianceId: string) => {
-    if (!stronghold) return;
-
-    const now = Date.now();
-    setStronghold({
-      ...stronghold,
-      allianceId,
-      activityLog: [
-        {
-          timestamp: now,
-          type: 'alliance',
-          message: `Joined alliance!`,
-        },
-        ...stronghold.activityLog.slice(0, 19),
-      ],
+    setStronghold(prev => {
+      if (!prev) return prev;
+      const now = Date.now();
+      return {
+        ...prev, allianceId,
+        activityLog: [{ timestamp: now, type: 'alliance', message: `Joined alliance!` }, ...prev.activityLog.slice(0, 19)],
+      };
     });
-  }, [stronghold]);
+  }, []);
 
   const leaveAlliance = useCallback(() => {
-    if (!stronghold) return;
-
-    const now = Date.now();
-    setStronghold({
-      ...stronghold,
-      allianceId: null,
-      activityLog: [
-        {
-          timestamp: now,
-          type: 'alliance',
-          message: `Left alliance`,
-        },
-        ...stronghold.activityLog.slice(0, 19),
-      ],
+    setStronghold(prev => {
+      if (!prev) return prev;
+      const now = Date.now();
+      return {
+        ...prev, allianceId: null,
+        activityLog: [{ timestamp: now, type: 'alliance', message: `Left alliance` }, ...prev.activityLog.slice(0, 19)],
+      };
     });
-  }, [stronghold]);
+  }, []);
 
   // Assign raid deck
   const assignRaidDeck = useCallback((deckId: string) => {
-    if (!stronghold) return;
-
-    setStronghold({
-      ...stronghold,
-      assignedRaidDeckId: deckId,
-    });
-  }, [stronghold]);
+    setStronghold(prev => prev ? { ...prev, assignedRaidDeckId: deckId } : prev);
+  }, []);
 
   // Assign defence deck
   const assignDefenceDeck = useCallback((deckId: string) => {
-    if (!stronghold) return;
-
-    setStronghold({
-      ...stronghold,
-      assignedDefenceDeckId: deckId,
-    });
-  }, [stronghold]);
+    setStronghold(prev => prev ? { ...prev, assignedDefenceDeckId: deckId } : prev);
+  }, []);
 
   // Place new building
   const placeBuilding = useCallback((templateId: string, positionIndex: number) => {
-    if (!stronghold) return;
-
     const template = BUILDING_TEMPLATES[templateId];
     if (!template) return;
 
-    // Validate zone
     const zone = getZoneFromIndex(positionIndex);
     if (!template.allowedZones.includes(zone)) return;
 
-    // Check if position is occupied
-    const occupied = Object.values(stronghold.buildings).some(b => b.positionIndex === positionIndex);
-    if (occupied) return;
+    setStronghold(prev => {
+      if (!prev) return prev;
+      const occupied = Object.values(prev.buildings).some(b => b.positionIndex === positionIndex);
+      if (occupied) return prev;
 
-    const now = Date.now();
-    const buildingId = `${templateId}_${now}`;
+      const now = Date.now();
+      const buildingId = `${templateId}_${now}`;
+      const newBuilding: BuildingInstance = { templateId, level: 1, upgrading: false, positionIndex };
 
-    const newBuilding: BuildingInstance = {
-      templateId,
-      level: 1,
-      upgrading: false,
-      positionIndex,
-    };
-
-    setStronghold({
-      ...stronghold,
-      buildings: {
-        ...stronghold.buildings,
-        [buildingId]: newBuilding,
-      },
-      activityLog: [
-        {
-          timestamp: now,
-          type: 'production',
-          message: `${template.name} constructed at ${zone} zone`,
-        },
-        ...stronghold.activityLog.slice(0, 19),
-      ],
+      return {
+        ...prev,
+        buildings: { ...prev.buildings, [buildingId]: newBuilding },
+        activityLog: [
+          { timestamp: now, type: 'production', message: `${template.name} constructed at ${zone} zone` },
+          ...prev.activityLog.slice(0, 19),
+        ],
+      };
     });
-  }, [stronghold]);
+  }, []);
 
   // Move existing building
   const moveBuilding = useCallback((buildingId: string, newPositionIndex: number) => {
-    if (!stronghold) return;
+    setStronghold(prev => {
+      if (!prev) return prev;
+      const building = prev.buildings[buildingId];
+      if (!building) return prev;
 
-    const building = stronghold.buildings[buildingId];
-    if (!building) return;
+      const template = BUILDING_TEMPLATES[building.templateId];
+      if (!template) return prev;
 
-    const template = BUILDING_TEMPLATES[building.templateId];
-    if (!template) return;
+      const zone = getZoneFromIndex(newPositionIndex);
+      if (!template.allowedZones.includes(zone)) return prev;
 
-    // Validate zone
-    const zone = getZoneFromIndex(newPositionIndex);
-    if (!template.allowedZones.includes(zone)) return;
+      const occupied = Object.entries(prev.buildings).some(
+        ([id, b]) => b.positionIndex === newPositionIndex && id !== buildingId
+      );
+      if (occupied) return prev;
 
-    // Check if position is occupied by another building
-    const occupied = Object.entries(stronghold.buildings).some(
-      ([id, b]) => b.positionIndex === newPositionIndex && id !== buildingId
-    );
-    if (occupied) return;
-
-    const now = Date.now();
-
-    setStronghold({
-      ...stronghold,
-      buildings: {
-        ...stronghold.buildings,
-        [buildingId]: {
-          ...building,
-          positionIndex: newPositionIndex,
-        },
-      },
-      activityLog: [
-        {
-          timestamp: now,
-          type: 'production',
-          message: `${template.name} relocated to ${zone} zone`,
-        },
-        ...stronghold.activityLog.slice(0, 19),
-      ],
+      const now = Date.now();
+      return {
+        ...prev,
+        buildings: { ...prev.buildings, [buildingId]: { ...building, positionIndex: newPositionIndex } },
+        activityLog: [
+          { timestamp: now, type: 'production', message: `${template.name} relocated to ${zone} zone` },
+          ...prev.activityLog.slice(0, 19),
+        ],
+      };
     });
-  }, [stronghold]);
+  }, []);
 
   // Phase 4: Get Soft Mythex balance
   const getSoftMythexBalance = useCallback((): number => {
-    return stronghold?.softMythex || 0;
-  }, [stronghold]);
+    return strongholdRef.current?.softMythex || 0;
+  }, []);
 
   // Phase 4: Change Soft Mythex balance
   const changeSoftMythex = useCallback((delta: number) => {
@@ -540,35 +465,27 @@ export function StrongholdProvider({ children }: { children: React.ReactNode }) 
 
   // Phase 4: Grant battle rewards
   const grantBattleRewards = useCallback((rewards: { mythex: number; resources?: Partial<Resources> }) => {
-    if (!stronghold) return;
-
-    const now = Date.now();
-    const currentBalance = stronghold.softMythex || 0;
-    const newBalance = currentBalance + rewards.mythex;
-
-    const newResources = { ...stronghold.resources };
-    if (rewards.resources) {
-      Object.entries(rewards.resources).forEach(([resource, amount]) => {
-        if (amount) {
-          newResources[resource as keyof Resources] += amount;
-        }
-      });
-    }
-
-    setStronghold({
-      ...stronghold,
-      softMythex: newBalance,
-      resources: newResources,
-      activityLog: [
-        {
-          timestamp: now,
-          type: 'raid',
-          message: `Battle rewards: +${rewards.mythex} Soft Mythex${rewards.resources ? ', +resources' : ''}`,
-        },
-        ...stronghold.activityLog.slice(0, 19),
-      ],
+    setStronghold(prev => {
+      if (!prev) return prev;
+      const now = Date.now();
+      const newBalance = (prev.softMythex || 0) + rewards.mythex;
+      const newResources = { ...prev.resources };
+      if (rewards.resources) {
+        Object.entries(rewards.resources).forEach(([resource, amount]) => {
+          if (amount) newResources[resource as keyof Resources] += amount;
+        });
+      }
+      return {
+        ...prev,
+        softMythex: newBalance,
+        resources: newResources,
+        activityLog: [
+          { timestamp: now, type: 'raid', message: `Battle rewards: +${rewards.mythex} Soft Mythex${rewards.resources ? ', +resources' : ''}` },
+          ...prev.activityLog.slice(0, 19),
+        ],
+      };
     });
-  }, [stronghold]);
+  }, []);
 
   // Phase 5: Check if can pay entry fee
   const canPayEntryFee = useCallback((fee: number): boolean => {
@@ -595,44 +512,43 @@ export function StrongholdProvider({ children }: { children: React.ReactNode }) 
     });
   }, []);
 
-  // Periodic tick
+  // Periodic tick - mount only since callbacks are now stable (empty deps)
   useEffect(() => {
-    if (!stronghold) return;
-
     const interval = setInterval(() => {
+      if (!strongholdRef.current) return;
       applyTickNow();
       finishReadyUpgrades();
     }, TICK_INTERVAL);
 
     return () => clearInterval(interval);
-  }, [stronghold, applyTickNow, finishReadyUpgrades]);
+  }, [applyTickNow, finishReadyUpgrades]);
+
+  const contextValue = useMemo(() => ({
+    stronghold,
+    createNewStronghold,
+    applyTickNow,
+    startUpgrade,
+    finishReadyUpgrades,
+    performTradeWithNpc,
+    launchRaid,
+    joinAlliance,
+    leaveAlliance,
+    assignRaidDeck,
+    assignDefenceDeck,
+    placeBuilding,
+    moveBuilding,
+    getSoftMythexBalance,
+    changeSoftMythex,
+    grantBattleRewards,
+    canPayEntryFee,
+    payEntryFee,
+    grantTournamentRewards,
+    collectProduction,
+    getAccumulatedProduction,
+  }), [stronghold, createNewStronghold, applyTickNow, startUpgrade, finishReadyUpgrades, performTradeWithNpc, launchRaid, joinAlliance, leaveAlliance, assignRaidDeck, assignDefenceDeck, placeBuilding, moveBuilding, getSoftMythexBalance, changeSoftMythex, grantBattleRewards, canPayEntryFee, payEntryFee, grantTournamentRewards, collectProduction, getAccumulatedProduction]);
 
   return (
-    <StrongholdContext.Provider
-      value={{
-        stronghold,
-        createNewStronghold,
-        applyTickNow,
-        startUpgrade,
-        finishReadyUpgrades,
-        performTradeWithNpc,
-        launchRaid,
-        joinAlliance,
-        leaveAlliance,
-        assignRaidDeck,
-        assignDefenceDeck,
-        placeBuilding,
-        moveBuilding,
-        getSoftMythexBalance,
-        changeSoftMythex,
-        grantBattleRewards,
-        canPayEntryFee,
-        payEntryFee,
-        grantTournamentRewards,
-        collectProduction,
-        getAccumulatedProduction,
-      }}
-    >
+    <StrongholdContext.Provider value={contextValue}>
       {children}
     </StrongholdContext.Provider>
   );

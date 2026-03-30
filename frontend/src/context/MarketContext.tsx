@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { HeroListing, NpcHeroOffer, ListingStatus } from '../types/economy';
 import { useHeroes } from './HeroesContext';
 import { useEconomy } from './EconomyContext';
@@ -37,6 +37,10 @@ export function MarketProvider({ children }: { children: React.ReactNode }) {
   const { heroes, addHero, removeCard } = useHeroes();
   const { spendMythex, earnMythex, canAffordMythex } = useEconomy();
 
+  const heroesRef = useRef(heroes);
+  useEffect(() => { heroesRef.current = heroes; }, [heroes]);
+  const stateRef = useRef<MarketState>(null as any);
+
   const [state, setState] = useState<MarketState>(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
@@ -47,6 +51,9 @@ export function MarketProvider({ children }: { children: React.ReactNode }) {
       nextListingId: 1,
     };
   });
+
+  // Keep stateRef in sync
+  useEffect(() => { stateRef.current = state; }, [state]);
 
   // Save to localStorage whenever state changes
   useEffect(() => {
@@ -79,34 +86,35 @@ export function MarketProvider({ children }: { children: React.ReactNode }) {
 
   // List hero for sale
   const listHeroForSale = useCallback((heroInstanceId: string, price: number): boolean => {
-    const hero = heroes.find(h => h.instanceId === heroInstanceId);
+    const hero = heroesRef.current.find(h => h.instanceId === heroInstanceId);
     if (!hero || hero.marketLocked) {
       console.warn('[MarketContext] Hero not found or already locked:', heroInstanceId);
       return false;
     }
 
-    const newListing: HeroListing = {
-      id: `listing-${state.nextListingId}`,
-      heroInstanceId,
-      price,
-      seller: 'local-player',
-      status: 'active',
-      listedAt: Date.now(),
-    };
+    setState(prev => {
+      const newListing: HeroListing = {
+        id: `listing-${prev.nextListingId}`,
+        heroInstanceId,
+        price,
+        seller: 'local-player',
+        status: 'active',
+        listedAt: Date.now(),
+      };
+      console.log('[MarketContext] Hero listed for sale:', newListing);
+      return {
+        ...prev,
+        listings: [...prev.listings, newListing],
+        nextListingId: prev.nextListingId + 1,
+      };
+    });
 
-    setState(prev => ({
-      ...prev,
-      listings: [...prev.listings, newListing],
-      nextListingId: prev.nextListingId + 1,
-    }));
-
-    console.log('[MarketContext] Hero listed for sale:', newListing);
     return true;
-  }, [heroes, state.nextListingId]);
+  }, []);
 
   // Buy listing
   const buyListing = useCallback((listingId: string): boolean => {
-    const listing = state.listings.find(l => l.id === listingId && l.status === 'active');
+    const listing = stateRef.current.listings.find(l => l.id === listingId && l.status === 'active');
     if (!listing) {
       console.error('[MarketContext] Listing not found or not active:', listingId);
       return false;
@@ -117,7 +125,7 @@ export function MarketProvider({ children }: { children: React.ReactNode }) {
       return false;
     }
 
-    const hero = heroes.find(h => h.instanceId === listing.heroInstanceId);
+    const hero = heroesRef.current.find(h => h.instanceId === listing.heroInstanceId);
     if (!hero) {
       console.error('[MarketContext] Hero not found:', listing.heroInstanceId);
       return false;
@@ -147,11 +155,11 @@ export function MarketProvider({ children }: { children: React.ReactNode }) {
 
     console.log('[MarketContext] Successfully purchased hero from listing:', listingId);
     return true;
-  }, [state.listings, heroes, canAffordMythex, spendMythex, addHero, removeCard]);
+  }, [canAffordMythex, spendMythex, addHero, removeCard]);
 
   // Cancel listing
   const cancelListing = useCallback((listingId: string): boolean => {
-    const listing = state.listings.find(l => l.id === listingId && l.status === 'active');
+    const listing = stateRef.current.listings.find(l => l.id === listingId && l.status === 'active');
     if (!listing) {
       console.error('[MarketContext] Listing not found or not active:', listingId);
       return false;
@@ -168,19 +176,19 @@ export function MarketProvider({ children }: { children: React.ReactNode }) {
 
     console.log('[MarketContext] Listing cancelled:', listingId);
     return true;
-  }, [state.listings]);
+  }, []);
+
+  const contextValue = useMemo(() => ({
+    listings: state.listings,
+    npcOffers: NPC_OFFERS,
+    buyFromNpc,
+    listHeroForSale,
+    buyListing,
+    cancelListing,
+  }), [state.listings, buyFromNpc, listHeroForSale, buyListing, cancelListing]);
 
   return (
-    <MarketContext.Provider
-      value={{
-        listings: state.listings,
-        npcOffers: NPC_OFFERS,
-        buyFromNpc,
-        listHeroForSale,
-        buyListing,
-        cancelListing,
-      }}
-    >
+    <MarketContext.Provider value={contextValue}>
       {children}
     </MarketContext.Provider>
   );

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { DynamicCardBalance, BalanceRecommendation } from '../types/balancer';
 import { useTelemetry } from './TelemetryContext';
 import { computeBalanceRecommendations, getCurrentManaForCard } from '../lib/balancerEngine';
@@ -166,19 +166,19 @@ export function BalancerProvider({ children }: { children: React.ReactNode }) {
     return () => clearTimeout(timer);
   }, [summary.totalBattles, summary.lastUpdated, engineParams]); // Only depend on specific fields
 
+  const contextValue = useMemo(() => ({
+    balances,
+    recommendations,
+    getManaForCard,
+    recomputeRecommendations,
+    applyRecommendation,
+    applyAllRecommendations,
+    resetBalances,
+    BALANCER_IMMUTABLE,
+  }), [balances, recommendations, getManaForCard, recomputeRecommendations, applyRecommendation, applyAllRecommendations, resetBalances]);
+
   return (
-    <BalancerContext.Provider
-      value={{
-        balances,
-        recommendations,
-        getManaForCard,
-        recomputeRecommendations,
-        applyRecommendation,
-        applyAllRecommendations,
-        resetBalances,
-        BALANCER_IMMUTABLE,
-      }}
-    >
+    <BalancerContext.Provider value={contextValue}>
       {children}
     </BalancerContext.Provider>
   );

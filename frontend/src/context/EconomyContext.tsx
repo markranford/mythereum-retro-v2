@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SoftWallet, ResourceAmount, EconomyTransaction } from '../types/economy';
 import { useAccount } from './AccountContext';
 
@@ -56,6 +56,7 @@ export function EconomyProvider({ children }: { children: React.ReactNode }) {
   
   // PRIORITY 2: Use ref to prevent circular updates
   const isUpdatingRef = useRef(false);
+  const walletRef = useRef<SoftWallet | null>(null);
 
   // PRIORITY 3: Diagnostic logging
   const renderCountRef = useRef(0);
@@ -150,6 +151,9 @@ export function EconomyProvider({ children }: { children: React.ReactNode }) {
     }
   }, [account?.accountId]); // PRIORITY 2: Only depend on accountId
 
+  // Keep wallet ref in sync
+  useEffect(() => { walletRef.current = wallet; }, [wallet]);
+
   // PRIORITY 2: Debounced localStorage writes (300ms) to prevent excessive updates
   useEffect(() => {
     if (!wallet || !account || isUpdatingRef.current) return;
@@ -211,7 +215,7 @@ export function EconomyProvider({ children }: { children: React.ReactNode }) {
   }, [wallet]);
 
   const earnMythex = useCallback((amount: number, source: string) => {
-    if (!wallet || amount <= 0) return;
+    if (!walletRef.current || amount <= 0) return;
 
     if (import.meta.env.DEV) {
       console.debug(`[EconomyContext] Earning ${amount} Mythex from ${source}`);
@@ -231,12 +235,12 @@ export function EconomyProvider({ children }: { children: React.ReactNode }) {
       mythex: amount,
       source,
     });
-  }, [wallet, addTransaction]);
+  }, [addTransaction]);
 
   const spendMythex = useCallback((amount: number, source: string): boolean => {
-    if (!wallet || amount <= 0) return false;
-    if (wallet.mythex < amount) {
-      console.warn(`[EconomyContext] Insufficient Mythex: need ${amount}, have ${wallet.mythex}`);
+    if (!walletRef.current || amount <= 0) return false;
+    if (walletRef.current.mythex < amount) {
+      console.warn(`[EconomyContext] Insufficient Mythex: need ${amount}, have ${walletRef.current.mythex}`);
       return false;
     }
 
@@ -260,10 +264,10 @@ export function EconomyProvider({ children }: { children: React.ReactNode }) {
     });
 
     return true;
-  }, [wallet, addTransaction]);
+  }, [addTransaction]);
 
   const earnResources = useCallback((resources: Partial<ResourceAmount>, source: string) => {
-    if (!wallet) return;
+    if (!walletRef.current) return;
 
     if (import.meta.env.DEV) {
       console.debug(`[EconomyContext] Earning resources from ${source}:`, resources);
@@ -272,7 +276,7 @@ export function EconomyProvider({ children }: { children: React.ReactNode }) {
     setWallet(prev => {
       if (!prev) return prev;
       const newResources = { ...prev.resources };
-      
+
       Object.entries(resources).forEach(([resource, amount]) => {
         if (amount && amount > 0) {
           newResources[resource as keyof ResourceAmount] += amount;
@@ -291,15 +295,15 @@ export function EconomyProvider({ children }: { children: React.ReactNode }) {
       resources,
       source,
     });
-  }, [wallet, addTransaction]);
+  }, [addTransaction]);
 
   const spendResources = useCallback((resources: Partial<ResourceAmount>, source: string): boolean => {
-    if (!wallet) return false;
+    if (!walletRef.current) return false;
 
     // Check if can afford
     const canAfford = Object.entries(resources).every(([resource, amount]) => {
       if (!amount || amount <= 0) return true;
-      return wallet.resources[resource as keyof ResourceAmount] >= amount;
+      return walletRef.current!.resources[resource as keyof ResourceAmount] >= amount;
     });
 
     if (!canAfford) {
@@ -314,7 +318,7 @@ export function EconomyProvider({ children }: { children: React.ReactNode }) {
     setWallet(prev => {
       if (!prev) return prev;
       const newResources = { ...prev.resources };
-      
+
       Object.entries(resources).forEach(([resource, amount]) => {
         if (amount && amount > 0) {
           newResources[resource as keyof ResourceAmount] -= amount;
@@ -335,7 +339,7 @@ export function EconomyProvider({ children }: { children: React.ReactNode }) {
     });
 
     return true;
-  }, [wallet, addTransaction]);
+  }, [addTransaction]);
 
   const canAffordMythex = useCallback((amount: number): boolean => {
     return (wallet?.mythex || 0) >= amount;
@@ -353,22 +357,22 @@ export function EconomyProvider({ children }: { children: React.ReactNode }) {
     return transactions;
   }, [transactions]);
 
+  const contextValue = useMemo(() => ({
+    wallet,
+    getMythexBalance,
+    getResourceBalance,
+    earnMythex,
+    spendMythex,
+    earnResources,
+    spendResources,
+    canAffordMythex,
+    canAffordResources,
+    getTransactionHistory,
+    isInitialized,
+  }), [wallet, getMythexBalance, getResourceBalance, earnMythex, spendMythex, earnResources, spendResources, canAffordMythex, canAffordResources, getTransactionHistory, isInitialized]);
+
   return (
-    <EconomyContext.Provider
-      value={{
-        wallet,
-        getMythexBalance,
-        getResourceBalance,
-        earnMythex,
-        spendMythex,
-        earnResources,
-        spendResources,
-        canAffordMythex,
-        canAffordResources,
-        getTransactionHistory,
-        isInitialized,
-      }}
-    >
+    <EconomyContext.Provider value={contextValue}>
       {children}
     </EconomyContext.Provider>
   );
