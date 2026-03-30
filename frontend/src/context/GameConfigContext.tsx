@@ -23,12 +23,21 @@ interface GameConfigAdminContextType {
   setCardOverride: (cardId: string, override: CardOverride) => void;
   /** Remove a per-card override */
   clearCardOverride: (cardId: string) => void;
+  /** Profile management */
+  activeProfileName: string;
+  profileNames: string[];
+  saveProfile: (name: string) => void;
+  loadProfile: (name: string) => void;
+  deleteProfile: (name: string) => void;
+  renameProfile: (oldName: string, newName: string) => void;
 }
 
 const GameConfigContext = createContext<GameConfigContextType | undefined>(undefined);
 const GameConfigAdminContext = createContext<GameConfigAdminContextType | undefined>(undefined);
 
 const STORAGE_KEY = 'retro-mythereum-gameconfig-v1';
+const PROFILES_KEY = 'retro-mythereum-gameconfig-profiles-v1';
+const ACTIVE_PROFILE_KEY = 'retro-mythereum-gameconfig-active-profile-v1';
 
 // --- Deep merge: stored values over defaults (handles new keys added in code) ---
 
@@ -67,13 +76,35 @@ export function GameConfigProvider({ children }: { children: React.ReactNode }) 
     return { ...DEFAULT_GAME_CONFIG };
   });
 
+  // --- Profile state ---
+  const [activeProfileName, setActiveProfileName] = useState<string>(() => {
+    return localStorage.getItem(ACTIVE_PROFILE_KEY) || 'Default';
+  });
+
+  const [profiles, setProfiles] = useState<Record<string, GameConfig>>(() => {
+    try {
+      const stored = localStorage.getItem(PROFILES_KEY);
+      if (stored) return JSON.parse(stored);
+    } catch {}
+    return {};
+  });
+
   // Debounced localStorage write (300ms)
   useEffect(() => {
     const timer = setTimeout(() => {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+      localStorage.setItem(ACTIVE_PROFILE_KEY, activeProfileName);
     }, 300);
     return () => clearTimeout(timer);
-  }, [config]);
+  }, [config, activeProfileName]);
+
+  // Save profiles when they change
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      localStorage.setItem(PROFILES_KEY, JSON.stringify(profiles));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [profiles]);
 
   // --- Read helpers ---
 
@@ -125,6 +156,43 @@ export function GameConfigProvider({ children }: { children: React.ReactNode }) 
     });
   }, []);
 
+  // --- Profile management ---
+
+  const profileNames = useMemo(() => Object.keys(profiles).sort(), [profiles]);
+
+  const saveProfile = useCallback((name: string) => {
+    setProfiles(prev => ({ ...prev, [name]: JSON.parse(JSON.stringify(config)) }));
+    setActiveProfileName(name);
+  }, [config]);
+
+  const loadProfile = useCallback((name: string) => {
+    setProfiles(prev => {
+      const profile = prev[name];
+      if (profile) {
+        setConfig(deepMergeConfig(DEFAULT_GAME_CONFIG, profile));
+        setActiveProfileName(name);
+      }
+      return prev;
+    });
+  }, []);
+
+  const deleteProfile = useCallback((name: string) => {
+    setProfiles(prev => {
+      const { [name]: _, ...rest } = prev;
+      return rest;
+    });
+    setActiveProfileName(prev => prev === name ? 'Default' : prev);
+  }, []);
+
+  const renameProfile = useCallback((oldName: string, newName: string) => {
+    setProfiles(prev => {
+      const { [oldName]: profileData, ...rest } = prev;
+      if (!profileData) return prev;
+      return { ...rest, [newName]: profileData };
+    });
+    setActiveProfileName(prev => prev === oldName ? newName : prev);
+  }, []);
+
   // --- Context values (memoized) ---
 
   const configValue = useMemo(() => ({
@@ -138,7 +206,13 @@ export function GameConfigProvider({ children }: { children: React.ReactNode }) 
     resetAll,
     setCardOverride,
     clearCardOverride,
-  }), [updateCategory, resetCategory, resetAll, setCardOverride, clearCardOverride]);
+    activeProfileName,
+    profileNames,
+    saveProfile,
+    loadProfile,
+    deleteProfile,
+    renameProfile,
+  }), [updateCategory, resetCategory, resetAll, setCardOverride, clearCardOverride, activeProfileName, profileNames, saveProfile, loadProfile, deleteProfile, renameProfile]);
 
   return (
     <GameConfigContext.Provider value={configValue}>

@@ -1,7 +1,8 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { Tournament, TournamentConfig, TournamentParticipant, TournamentMatch, TournamentStatus } from '../types/tournaments';
 import { useHeroes } from './HeroesContext';
 import { useEconomy } from './EconomyContext';
+import { useGameConfig } from './GameConfigContext';
 
 interface TournamentsContextType {
   tournaments: Tournament[];
@@ -48,7 +49,10 @@ function validateTournamentsArray(data: any): Tournament[] {
 export function TournamentsProvider({ children }: { children: React.ReactNode }) {
   const { getDeckPower } = useHeroes();
   const { canAffordMythex, spendMythex } = useEconomy();
-  
+  const { tournamentDefaults: tournCfg } = useGameConfig();
+  const tournCfgRef = useRef(tournCfg);
+  useEffect(() => { tournCfgRef.current = tournCfg; }, [tournCfg]);
+
   const [tournaments, setTournaments] = useState<Tournament[]>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
@@ -64,55 +68,28 @@ export function TournamentsProvider({ children }: { children: React.ReactNode })
       console.error('[TournamentsContext] Failed to load tournaments:', error);
     }
     
-    // Create default tournaments
-    const defaultTournaments: Tournament[] = [
-      {
-        id: generateId(),
-        name: 'Novice Arena',
-        config: {
-          name: 'Novice Arena',
-          format: 'single-elimination',
-          maxParticipants: 8,
-          entryFee: 50,
-          startTime: Date.now() + 24 * 60 * 60 * 1000,
-        },
-        status: 'registration',
-        participants: [],
-        matches: [],
-        currentRound: 0,
-        rewards: {
-          first: { mythex: 500, resources: { gold: 100, stone: 100, lumber: 100, iron: 100, food: 100, mana: 0 } },
-          second: { mythex: 300, resources: { gold: 60, stone: 60, lumber: 60, iron: 60, food: 60, mana: 0 } },
-          third: { mythex: 150, resources: { gold: 30, stone: 30, lumber: 30, iron: 30, food: 30, mana: 0 } },
-        },
-        championId: undefined,
-        createdAt: Date.now(),
+    // Create default tournaments from config presets
+    const cfg = tournCfgRef.current;
+    const defaultTournaments: Tournament[] = cfg.presets.map((preset, idx) => ({
+      id: generateId(),
+      name: preset.name,
+      config: {
+        name: preset.name,
+        format: preset.format,
+        maxParticipants: preset.maxParticipants,
+        entryFee: preset.entryFee,
+        startTime: Date.now() + preset.startDelayHours * 60 * 60 * 1000,
       },
-      {
-        id: generateId(),
-        name: 'Champion\'s Challenge',
-        config: {
-          name: 'Champion\'s Challenge',
-          format: 'single-elimination',
-          maxParticipants: 16,
-          entryFee: 100,
-          startTime: Date.now() + 48 * 60 * 60 * 1000,
-        },
-        status: 'upcoming',
-        participants: [],
-        matches: [],
-        currentRound: 0,
-        rewards: {
-          first: { mythex: 1000, resources: { gold: 200, stone: 200, lumber: 200, iron: 200, food: 200, mana: 50 } },
-          second: { mythex: 600, resources: { gold: 120, stone: 120, lumber: 120, iron: 120, food: 120, mana: 25 } },
-          third: { mythex: 300, resources: { gold: 60, stone: 60, lumber: 60, iron: 60, food: 60, mana: 10 } },
-        },
-        championId: undefined,
-        createdAt: Date.now(),
-      },
-    ];
-    
-    console.log('[TournamentsContext] Initialized with default tournaments');
+      status: (idx === 0 ? 'registration' : 'upcoming') as TournamentStatus,
+      participants: [],
+      matches: [],
+      currentRound: 0,
+      rewards: preset.rewards,
+      championId: undefined,
+      createdAt: Date.now(),
+    }));
+
+    console.log('[TournamentsContext] Initialized with', defaultTournaments.length, 'default tournaments from config');
     return defaultTournaments;
   });
 

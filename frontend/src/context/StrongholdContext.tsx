@@ -3,6 +3,8 @@ import { Stronghold, Resources, BuildingInstance } from '../types/strongholds';
 import { createStarterStronghold, BUILDING_TEMPLATES, NPC_RAID_TARGETS } from '../lib/strongholdMockData';
 import { getZoneFromIndex } from '../lib/hexMath';
 import { useEconomy } from './EconomyContext';
+import { useGameConfig } from './GameConfigContext';
+import { StrongholdProductionConfig } from '../types/gameConfig';
 
 interface StrongholdContextType {
   stronghold: Stronghold | null;
@@ -41,8 +43,21 @@ interface ExtendedStronghold extends Stronghold {
   lastProductionCollection?: number;
 }
 
+// Map building templateId to config production rate key
+const PRODUCTION_CONFIG_MAP: Record<string, keyof StrongholdProductionConfig> = {
+  goldMine: 'goldMineBase',
+  stoneQuarry: 'stoneQuarryBase',
+  lumberYard: 'lumberYardBase',
+  ironMine: 'ironMineBase',
+  farmstead: 'farmsteadBase',
+  alchemistLab: 'alchemistLabBase',
+};
+
 export function StrongholdProvider({ children }: { children: React.ReactNode }) {
   const { earnResources: economyEarnResources } = useEconomy();
+  const { strongholdProduction: shCfg, raids: raidsCfg } = useGameConfig();
+  const shCfgRef = useRef(shCfg);
+  const raidsCfgRef = useRef(raidsCfg);
   
   const [stronghold, setStronghold] = useState<ExtendedStronghold | null>(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
@@ -67,6 +82,8 @@ export function StrongholdProvider({ children }: { children: React.ReactNode }) 
 
   const strongholdRef = useRef(stronghold);
   useEffect(() => { strongholdRef.current = stronghold; }, [stronghold]);
+  useEffect(() => { shCfgRef.current = shCfg; }, [shCfg]);
+  useEffect(() => { raidsCfgRef.current = raidsCfg; }, [raidsCfg]);
 
   // Save to localStorage whenever stronghold changes
   useEffect(() => {
@@ -76,6 +93,19 @@ export function StrongholdProvider({ children }: { children: React.ReactNode }) 
       localStorage.removeItem(STORAGE_KEY);
     }
   }, [stronghold]);
+
+  // Get config-aware production rate for a building
+  const getBuildingProductionRate = useCallback((templateId: string): number => {
+    const cfgKey = PRODUCTION_CONFIG_MAP[templateId];
+    if (cfgKey) return shCfgRef.current[cfgKey] as number;
+    // Fallback to template default
+    const template = BUILDING_TEMPLATES[templateId];
+    if (template?.baseProduction) {
+      const values = Object.values(template.baseProduction).filter(Boolean);
+      return values.length > 0 ? values[0]! : 0;
+    }
+    return 0;
+  }, []);
 
   // Phase 10: Calculate accumulated production
   const getAccumulatedProduction = useCallback((): Resources => {
@@ -93,17 +123,16 @@ export function StrongholdProvider({ children }: { children: React.ReactNode }) 
     Object.entries(sh.buildings).forEach(([, building]) => {
       const template = BUILDING_TEMPLATES[building.templateId];
       if (template.baseProduction) {
-        Object.entries(template.baseProduction).forEach(([resource, baseAmount]) => {
-          if (baseAmount) {
-            const amount = baseAmount * building.level * hoursElapsed;
-            production[resource as keyof Resources] += Math.floor(amount);
-          }
+        const rate = getBuildingProductionRate(building.templateId);
+        Object.keys(template.baseProduction).forEach(resource => {
+          const amount = rate * building.level * hoursElapsed;
+          production[resource as keyof Resources] += Math.floor(amount);
         });
       }
     });
 
     return production;
-  }, []);
+  }, [getBuildingProductionRate]);
 
   // Phase 10: Collect production and add to economy
   const collectProduction = useCallback(() => {
@@ -145,11 +174,10 @@ export function StrongholdProvider({ children }: { children: React.ReactNode }) 
       Object.entries(prev.buildings).forEach(([, building]) => {
         const template = BUILDING_TEMPLATES[building.templateId];
         if (template.baseProduction) {
-          Object.entries(template.baseProduction).forEach(([resource, baseAmount]) => {
-            if (baseAmount) {
-              const production = baseAmount * building.level * hoursElapsed;
-              newResources[resource as keyof Resources] += Math.floor(production);
-            }
+          const rate = getBuildingProductionRate(building.templateId);
+          Object.keys(template.baseProduction).forEach(resource => {
+            const production = rate * building.level * hoursElapsed;
+            newResources[resource as keyof Resources] += Math.floor(production);
           });
         }
       });
@@ -289,7 +317,7 @@ export function StrongholdProvider({ children }: { children: React.ReactNode }) 
 
   // Launch Raid with deck power integration
   const launchRaid = useCallback((targetId: string, raidDeckPower?: number) => {
-    const target = NPC_RAID_TARGETS.find(t => t.id === targetId);
+    const target = raidsCfgRef.current.targets.find(t => t.id === targetId);
     if (!target) return;
 
     setStronghold(prev => {
@@ -512,16 +540,17 @@ export function StrongholdProvider({ children }: { children: React.ReactNode }) 
     });
   }, []);
 
-  // Periodic tick - mount only since callbacks are now stable (empty deps)
+  // Periodic tick - restarts when tick interval config changes
   useEffect(() => {
+    const tickMs = shCfgRef.current.tickIntervalMs || 30000;
     const interval = setInterval(() => {
       if (!strongholdRef.current) return;
       applyTickNow();
       finishReadyUpgrades();
-    }, TICK_INTERVAL);
+    }, tickMs);
 
     return () => clearInterval(interval);
-  }, [applyTickNow, finishReadyUpgrades]);
+  }, [applyTickNow, finishReadyUpgrades, shCfg.tickIntervalMs]);
 
   const contextValue = useMemo(() => ({
     stronghold,

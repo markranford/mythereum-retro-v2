@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useGameConfig, useGameConfigAdmin } from '../context/GameConfigContext';
 import { DEFAULT_GAME_CONFIG } from '../config/gameConfigDefaults';
 import { useInternetIdentity } from '../hooks/useInternetIdentity';
@@ -5,7 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button';
 import { Slider } from '../components/ui/slider';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
-import { Settings, Lock, RotateCcw, Swords, Trophy, Heart, Coins, Building2, Store, Target, Layers } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import { Settings, Lock, RotateCcw, Swords, Trophy, Heart, Coins, Building2, Store, Target, Layers, Save, Trash2, FolderOpen } from 'lucide-react';
 
 function ConfigSlider({ label, value, min, max, step, onChange, unit }: {
   label: string; value: number; min: number; max: number; step?: number; onChange: (v: number) => void; unit?: string;
@@ -42,7 +44,8 @@ function CategoryHeader({ title, icon, onReset }: { title: string; icon: React.R
 export default function AdminGameConfigPage() {
   const { identity } = useInternetIdentity();
   const config = useGameConfig();
-  const { updateCategory, resetCategory, resetAll } = useGameConfigAdmin();
+  const { updateCategory, resetCategory, resetAll, activeProfileName, profileNames, saveProfile, loadProfile, deleteProfile } = useGameConfigAdmin();
+  const [newProfileName, setNewProfileName] = useState('');
 
   if (!identity) {
     return (
@@ -73,6 +76,71 @@ export default function AdminGameConfigPage() {
           </Button>
         </div>
       </div>
+
+      {/* Profile Management Bar */}
+      <Card className="bg-gradient-to-r from-slate-900/90 to-slate-800/80 border-2 border-purple-600/40">
+        <CardContent className="p-4">
+          <div className="flex items-center gap-4 flex-wrap">
+            <div className="flex items-center gap-2">
+              <FolderOpen className="w-5 h-5 text-purple-400" />
+              <span className="text-purple-300 font-semibold text-sm">Profile:</span>
+              <span className="text-amber-400 font-bold">{activeProfileName}</span>
+            </div>
+
+            {profileNames.length > 0 && (
+              <Select onValueChange={loadProfile}>
+                <SelectTrigger className="w-48 bg-slate-900/70 border-purple-600/40 text-amber-200 h-9">
+                  <SelectValue placeholder="Load profile..." />
+                </SelectTrigger>
+                <SelectContent className="bg-slate-900 border-purple-600/50">
+                  {profileNames.map(name => (
+                    <SelectItem key={name} value={name} className="text-amber-200 focus:bg-purple-600/20 focus:text-amber-300">
+                      {name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={newProfileName}
+                onChange={e => setNewProfileName(e.target.value)}
+                placeholder="New profile name..."
+                className="bg-slate-900/70 border border-purple-600/40 text-amber-200 rounded-md px-3 py-1.5 text-sm w-44 placeholder:text-amber-200/40"
+              />
+              <Button
+                onClick={() => { if (newProfileName.trim()) { saveProfile(newProfileName.trim()); setNewProfileName(''); } }}
+                disabled={!newProfileName.trim()}
+                size="sm"
+                className="bg-purple-600/60 hover:bg-purple-600/80 text-white gap-1"
+              >
+                <Save className="w-3 h-3" /> Save
+              </Button>
+            </div>
+
+            {activeProfileName !== 'Default' && profileNames.includes(activeProfileName) && (
+              <div className="flex items-center gap-2">
+                <Button
+                  onClick={() => saveProfile(activeProfileName)}
+                  size="sm" variant="outline"
+                  className="border-amber-600/40 text-amber-400 gap-1"
+                >
+                  <Save className="w-3 h-3" /> Overwrite
+                </Button>
+                <Button
+                  onClick={() => deleteProfile(activeProfileName)}
+                  size="sm" variant="outline"
+                  className="border-red-600/40 text-red-400 gap-1"
+                >
+                  <Trash2 className="w-3 h-3" /> Delete
+                </Button>
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       <Tabs defaultValue="combat" className="w-full">
         <TabsList className="bg-amber-950/50 border border-amber-600/40 flex-wrap h-auto gap-1 p-1">
