@@ -78,22 +78,34 @@ export interface BattleDeck {
  * - All cards in opponent's deck have currentDefense <= 0
  * - Winner is set to 1 (deck1) or 2 (deck2)
  */
+/** A single combat strike event (attacker → defender) for UI display */
+export interface CombatEvent {
+  attackerName: string;
+  attackerInstanceId: string | number;
+  defenderName: string;
+  defenderInstanceId: string | number;
+  damage: number;
+  defenderDestroyed: boolean;
+  /** Which side attacked: 1 = player deck1, 2 = AI deck2 */
+  side: 1 | 2;
+}
+
 export interface Battle {
   /** Player 1's deck and state */
   deck1: BattleDeck;
-  
+
   /** Player 2's deck and state */
   deck2: BattleDeck;
-  
+
   /** Current turn number (starts at 1, increments each round) */
   turn: number;
-  
+
   /** Current battle phase */
   phase: 'setup' | 'combat' | 'resolution' | 'complete';
-  
+
   /** Winner deck index (1 or 2) if battle is complete, null otherwise */
   winner: number | null;
-  
+
   /** Last combat event that occurred (for UI display and animation) */
   lastEvent?: {
     attacker: string;
@@ -101,7 +113,10 @@ export interface Battle {
     damage: number;
     defenderDestroyed: boolean;
   };
-  
+
+  /** All combat events from the latest round (Phase 1 + Phase 2) */
+  roundEvents?: CombatEvent[];
+
   /** Battle log messages for display (chronological order) */
   log: Array<{ message: string; category: 'upkeep' | 'action' | 'combat' | 'system' }>;
 }

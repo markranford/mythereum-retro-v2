@@ -1,4 +1,4 @@
-import { BattleCard, BattleDeck, Battle } from '../types/battle';
+import { BattleCard, BattleDeck, Battle, CombatEvent } from '../types/battle';
 import { OwnedHeroCard } from '../types/heroes';
 import { CombatConfig } from '../types/gameConfig';
 import { CARD_LIBRARY } from './mockData';
@@ -49,6 +49,7 @@ export function deepCloneBattle(battle: Battle): Battle {
     deck1: deepCloneDeck(battle.deck1),
     deck2: deepCloneDeck(battle.deck2),
     lastEvent: battle.lastEvent ? { ...battle.lastEvent } : undefined,
+    roundEvents: battle.roundEvents ? battle.roundEvents.map(e => ({ ...e })) : undefined,
     log: battle.log.map(entry => ({ ...entry })),
   };
 }
@@ -206,37 +207,53 @@ export function initializeBattle(deck1: BattleDeck, deck2: BattleDeck): Battle {
 }
 
 /**
+ * Player targeting options for a single round.
+ * When provided, the player chooses which of their cards attacks
+ * and which enemy card is the target.  Omitted fields fall back to random.
+ */
+export interface PlayerTargeting {
+  /** instanceId of the player card that should attack */
+  attackerInstanceId?: string | number;
+  /** instanceId of the enemy card to target */
+  targetInstanceId?: string | number;
+}
+
+/**
  * Simulate one round of battle using attack vs defense-based combat.
- * 
+ *
  * PURE FUNCTION - No side effects, no mutations.
  * Deep copies input battle state before applying any logic.
- * 
- * Combat Logic:
- * 1. Select random attacker from deck1 (live cards only)
- * 2. Select random defender from deck2 (live cards only)
- * 3. Calculate damage: attacker.attack - (defender.defense / 2)
- * 4. Apply minimum 1 damage to ensure progress
- * 5. Reduce defender's currentDefense by damage amount
- * 6. Check if defender is destroyed (currentDefense <= 0)
- * 7. Record combat event for UI display
- * 8. Check victory conditions (all cards on one side destroyed)
- * 
+ *
+ * Combat Flow:
+ *   Phase 1 — Deck 1 (player) attacks Deck 2 (AI)
+ *     • If `targeting` is provided the chosen attacker/target are used
+ *     • Otherwise a random attacker/target pair is selected
+ *   Phase 2 — Deck 2 (AI) counterattacks Deck 1
+ *     • Always random (AI has no targeting UI)
+ *
+ * Each phase records a CombatEvent so the UI can replay/animate every strike.
+ *
  * Returns new battle state with combat results.
  * Never mutates input battle state.
  */
-export function simulateBattleRound(battle: Battle, combatConfig?: CombatConfig): Battle {
+export function simulateBattleRound(
+  battle: Battle,
+  combatConfig?: CombatConfig,
+  targeting?: PlayerTargeting,
+): Battle {
   // Deep copy to prevent mutation - CRITICAL for React state integrity
   const next = deepCloneBattle(battle);
-  
+  next.roundEvents = []; // reset for this round
+
   // Check if battle is already complete
   if (next.winner !== null || next.phase === 'complete') {
     return next;
   }
-  
+
   // Get live cards from both decks (currentDefense > 0)
   const deck1Cards = next.deck1.cards.filter(c => c.currentDefense > 0);
   const deck2Cards = next.deck2.cards.filter(c => c.currentDefense > 0);
-  
+
   // Check for victory conditions before combat
   if (deck1Cards.length === 0) {
     next.winner = 2;
@@ -244,21 +261,29 @@ export function simulateBattleRound(battle: Battle, combatConfig?: CombatConfig)
     next.log.push({ message: `${next.deck2.ownerName} wins! All opponent cards defeated.`, category: 'system' });
     return next;
   }
-  
+
   if (deck2Cards.length === 0) {
     next.winner = 1;
     next.phase = 'complete';
     next.log.push({ message: `${next.deck1.ownerName} wins! All opponent cards defeated.`, category: 'system' });
     return next;
   }
-  
-  // === PHASE 1: Deck 1 attacks Deck 2 ===
-  const attacker1 = deck1Cards[Math.floor(Math.random() * deck1Cards.length)];
-  const defender1 = deck2Cards[Math.floor(Math.random() * deck2Cards.length)];
 
-  const baseDmg1 = attacker1.attack;
   const mitDiv = combatConfig?.damageMitigationDivisor ?? 2;
   const minDmg = combatConfig?.minimumDamage ?? 1;
+
+  // === PHASE 1: Deck 1 attacks Deck 2 ===
+  // Resolve attacker — player-chosen or random
+  const attacker1 = (targeting?.attackerInstanceId != null
+    ? deck1Cards.find(c => c.instanceId === targeting.attackerInstanceId)
+    : undefined) ?? deck1Cards[Math.floor(Math.random() * deck1Cards.length)];
+
+  // Resolve defender — player-targeted or random
+  const defender1 = (targeting?.targetInstanceId != null
+    ? deck2Cards.find(c => c.instanceId === targeting.targetInstanceId)
+    : undefined) ?? deck2Cards[Math.floor(Math.random() * deck2Cards.length)];
+
+  const baseDmg1 = attacker1.attack;
   const mitigated1 = Math.max(0, baseDmg1 - Math.floor(defender1.defense / mitDiv));
   const dmg1 = Math.max(minDmg, mitigated1);
 
@@ -269,27 +294,25 @@ export function simulateBattleRound(battle: Battle, combatConfig?: CombatConfig)
     next.deck2.cards[defIdx1].currentDefense -= dmg1;
     defender1Destroyed = next.deck2.cards[defIdx1].currentDefense <= 0;
 
-    if (defender1Destroyed) {
-      next.log.push({
-        message: `${attacker1.name} attacks ${defender1.name} for ${dmg1} damage - ${defender1.name} is destroyed!`,
-        category: 'combat',
-      });
-    } else {
-      next.log.push({
-        message: `${attacker1.name} attacks ${defender1.name} for ${dmg1} damage (${next.deck2.cards[defIdx1].currentDefense} HP remaining)`,
-        category: 'combat',
-      });
-    }
+    const msg = defender1Destroyed
+      ? `${attacker1.name} attacks ${defender1.name} for ${dmg1} damage - ${defender1.name} is destroyed!`
+      : `${attacker1.name} attacks ${defender1.name} for ${dmg1} damage (${next.deck2.cards[defIdx1].currentDefense} HP remaining)`;
+    next.log.push({ message: msg, category: 'combat' });
   }
 
-  // === PHASE 2: Deck 2 counterattacks Deck 1 ===
+  next.roundEvents.push({
+    attackerName: attacker1.name,
+    attackerInstanceId: attacker1.instanceId,
+    defenderName: defender1.name,
+    defenderInstanceId: defender1.instanceId,
+    damage: dmg1,
+    defenderDestroyed: defender1Destroyed,
+    side: 1,
+  });
+
+  // === PHASE 2: Deck 2 counterattacks Deck 1 (always random — AI) ===
   const liveDeck2 = next.deck2.cards.filter(c => c.currentDefense > 0);
   const liveDeck1 = next.deck1.cards.filter(c => c.currentDefense > 0);
-
-  let attacker2Name = '';
-  let defender2Name = '';
-  let dmg2 = 0;
-  let defender2Destroyed = false;
 
   if (liveDeck2.length > 0 && liveDeck1.length > 0) {
     const attacker2 = liveDeck2[Math.floor(Math.random() * liveDeck2.length)];
@@ -297,36 +320,42 @@ export function simulateBattleRound(battle: Battle, combatConfig?: CombatConfig)
 
     const baseDmg2 = attacker2.attack;
     const mitigated2 = Math.max(0, baseDmg2 - Math.floor(defender2.defense / mitDiv));
-    dmg2 = Math.max(minDmg, mitigated2);
-    attacker2Name = attacker2.name;
-    defender2Name = defender2.name;
+    const dmg2 = Math.max(minDmg, mitigated2);
 
     const defIdx2 = next.deck1.cards.findIndex(c => c.instanceId === defender2.instanceId);
+    let defender2Destroyed = false;
     if (defIdx2 !== -1) {
       next.deck1.cards[defIdx2] = deepCloneCard(next.deck1.cards[defIdx2]);
       next.deck1.cards[defIdx2].currentDefense -= dmg2;
       defender2Destroyed = next.deck1.cards[defIdx2].currentDefense <= 0;
 
-      if (defender2Destroyed) {
-        next.log.push({
-          message: `${attacker2Name} attacks ${defender2Name} for ${dmg2} damage - ${defender2Name} is destroyed!`,
-          category: 'combat',
-        });
-      } else {
-        next.log.push({
-          message: `${attacker2Name} attacks ${defender2Name} for ${dmg2} damage (${next.deck1.cards[defIdx2].currentDefense} HP remaining)`,
-          category: 'combat',
-        });
-      }
+      const msg = defender2Destroyed
+        ? `${attacker2.name} attacks ${defender2.name} for ${dmg2} damage - ${defender2.name} is destroyed!`
+        : `${attacker2.name} attacks ${defender2.name} for ${dmg2} damage (${next.deck1.cards[defIdx2].currentDefense} HP remaining)`;
+      next.log.push({ message: msg, category: 'combat' });
     }
+
+    next.roundEvents.push({
+      attackerName: attacker2.name,
+      attackerInstanceId: attacker2.instanceId,
+      defenderName: defender2.name,
+      defenderInstanceId: defender2.instanceId,
+      damage: dmg2,
+      defenderDestroyed: defender2Destroyed,
+      side: 2,
+    });
   }
 
-  // Record last event for UI (show the most dramatic event)
-  next.lastEvent = defender1Destroyed
-    ? { attacker: attacker1.name, defender: defender1.name, damage: dmg1, defenderDestroyed: true }
-    : defender2Destroyed
-    ? { attacker: attacker2Name, defender: defender2Name, damage: dmg2, defenderDestroyed: true }
-    : { attacker: attacker1.name, defender: defender1.name, damage: dmg1, defenderDestroyed: false };
+  // Record last event for backward-compat UI (show the most dramatic event)
+  const p1 = next.roundEvents[0];
+  const p2 = next.roundEvents[1];
+  next.lastEvent = (p1?.defenderDestroyed)
+    ? { attacker: p1.attackerName, defender: p1.defenderName, damage: p1.damage, defenderDestroyed: true }
+    : (p2?.defenderDestroyed)
+    ? { attacker: p2.attackerName, defender: p2.defenderName, damage: p2.damage, defenderDestroyed: true }
+    : p1
+    ? { attacker: p1.attackerName, defender: p1.defenderName, damage: p1.damage, defenderDestroyed: false }
+    : undefined;
 
   // Increment turn counter
   next.turn += 1;
@@ -334,7 +363,7 @@ export function simulateBattleRound(battle: Battle, combatConfig?: CombatConfig)
   // Check victory conditions after both attacks
   const remainingDeck1 = next.deck1.cards.filter(c => c.currentDefense > 0);
   const remainingDeck2 = next.deck2.cards.filter(c => c.currentDefense > 0);
-  
+
   if (remainingDeck2.length === 0) {
     next.winner = 1;
     next.phase = 'complete';
@@ -344,7 +373,7 @@ export function simulateBattleRound(battle: Battle, combatConfig?: CombatConfig)
     next.phase = 'complete';
     next.log.push({ message: `${next.deck2.ownerName} wins! All opponent cards defeated.`, category: 'system' });
   }
-  
+
   return next;
 }
 
