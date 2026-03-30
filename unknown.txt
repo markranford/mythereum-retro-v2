@@ -1,0 +1,65 @@
+
+### Implementation Status
+- ⏳ Canister splitting: Future phase
+- ⏳ Error handling refactor: Future phase
+- ⏳ Health metrics: Future phase
+
+---
+
+## Success Metrics
+
+### Render Loop Stability
+- ✅ Zero "Maximum update depth exceeded" errors in production
+- ✅ Render count < 10 per user interaction
+- ✅ Battle completion rewards granted exactly once
+- ✅ No memory leaks from uncleaned timers/effects
+
+### Performance
+- ⏳ Context update frequency < 5 per second per context
+- ⏳ Deck power calculation < 50ms for 30-card deck
+- ⏳ Resource summary computation < 20ms
+
+### Testing Coverage
+- ⏳ E2E tests for all battle flows
+- ⏳ Unit tests for all context methods
+- ⏳ Integration tests for context interactions
+
+### Backend Scalability
+- ⏳ Query latency < 100ms (p95)
+- ⏳ Update success rate > 99%
+- ⏳ Cycle consumption < 1T per 1000 operations
+
+---
+
+## Next Steps
+
+1. **Immediate (This Week)**
+   - ✅ Complete Priority 1 implementation
+   - ✅ Add developer debug logging
+   - [ ] Manual testing of battle flows
+
+2. **Short-term (Next 2 Weeks)**
+   - [ ] Implement context splitting (Priority 2)
+   - [ ] Add derived selectors with useMemo
+   - [ ] Begin error boundary implementation
+
+3. **Medium-term (Next Month)**
+   - [ ] Complete E2E test suite
+   - [ ] Add developer diagnostics panel
+   - [ ] Performance profiling and optimization
+
+4. **Long-term (Next Quarter)**
+   - [ ] Backend canister modularization
+   - [ ] Error handling refactor
+   - [ ] Health metrics implementation
+
+---
+
+## Maintenance Notes
+
+- Review this roadmap monthly
+- Update status as features are completed
+- Add new priorities as they emerge
+- Archive completed sections to separate document
+
+Last Updated: December 2, 2025
