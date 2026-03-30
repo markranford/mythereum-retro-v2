@@ -145,6 +145,7 @@ export default function AdminGameConfigPage() {
       <Tabs defaultValue="combat" className="w-full">
         <TabsList className="bg-amber-950/50 border border-amber-600/40 flex-wrap h-auto gap-1 p-1">
           <TabsTrigger value="combat" className="data-[state=active]:bg-amber-600/30 data-[state=active]:text-amber-300">Combat</TabsTrigger>
+          <TabsTrigger value="abilities" className="data-[state=active]:bg-amber-600/30 data-[state=active]:text-amber-300">Abilities</TabsTrigger>
           <TabsTrigger value="rewards" className="data-[state=active]:bg-amber-600/30 data-[state=active]:text-amber-300">Rewards</TabsTrigger>
           <TabsTrigger value="heroes" className="data-[state=active]:bg-amber-600/30 data-[state=active]:text-amber-300">Heroes</TabsTrigger>
           <TabsTrigger value="economy" className="data-[state=active]:bg-amber-600/30 data-[state=active]:text-amber-300">Economy</TabsTrigger>
@@ -164,6 +165,49 @@ export default function AdminGameConfigPage() {
                 onChange={v => updateCategory('combat', { damageMitigationDivisor: v })} unit="x" />
               <ConfigSlider label="Minimum Damage per Attack" value={config.combat.minimumDamage} min={0} max={10}
                 onChange={v => updateCategory('combat', { minimumDamage: v })} />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Class Abilities */}
+        <TabsContent value="abilities">
+          <Card className="bg-gradient-to-b from-slate-900/90 to-slate-800/80 border-2 border-amber-600/40">
+            <CardContent className="p-6 space-y-6">
+              <CategoryHeader title="Class Abilities" icon={<Swords className="w-5 h-5" />} onReset={() => resetCategory('classAbilities')} />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-4">
+                  <h4 className="text-yellow-300 font-semibold border-b border-yellow-600/30 pb-1">Warrior — Fortify</h4>
+                  <p className="text-xs text-amber-200/60">Flat damage reduction on incoming attacks</p>
+                  <ConfigSlider label="Damage Reduction" value={config.classAbilities.warriorFortifyReduction} min={0} max={10}
+                    onChange={v => updateCategory('classAbilities', { warriorFortifyReduction: v })} />
+                </div>
+                <div className="space-y-4">
+                  <h4 className="text-purple-300 font-semibold border-b border-purple-600/30 pb-1">Mage — Arcane Surge</h4>
+                  <p className="text-xs text-amber-200/60">Bonus to mitigation divisor (more = pierce more defense)</p>
+                  <ConfigSlider label="Bonus Divisor" value={config.classAbilities.mageArcaneSurgeBonusDivisor} min={0} max={10} step={0.5}
+                    onChange={v => updateCategory('classAbilities', { mageArcaneSurgeBonusDivisor: v })} unit="x" />
+                </div>
+                <div className="space-y-4">
+                  <h4 className="text-emerald-300 font-semibold border-b border-emerald-600/30 pb-1">Rogue — Critical Strike</h4>
+                  <p className="text-xs text-amber-200/60">Chance to multiply damage on attack</p>
+                  <ConfigSlider label="Crit Chance" value={config.classAbilities.rogueCriticalStrikeChance} min={0} max={1} step={0.05}
+                    onChange={v => updateCategory('classAbilities', { rogueCriticalStrikeChance: v })} unit="%" />
+                  <ConfigSlider label="Crit Multiplier" value={config.classAbilities.rogueCriticalStrikeMultiplier} min={1} max={5} step={0.5}
+                    onChange={v => updateCategory('classAbilities', { rogueCriticalStrikeMultiplier: v })} unit="x" />
+                </div>
+                <div className="space-y-4">
+                  <h4 className="text-green-300 font-semibold border-b border-green-600/30 pb-1">Healer — Rejuvenation</h4>
+                  <p className="text-xs text-amber-200/60">Heals most-damaged ally at start of each round</p>
+                  <ConfigSlider label="Heal Amount (HP)" value={config.classAbilities.healerRejuvenationAmount} min={0} max={10}
+                    onChange={v => updateCategory('classAbilities', { healerRejuvenationAmount: v })} />
+                </div>
+                <div className="space-y-4">
+                  <h4 className="text-sky-300 font-semibold border-b border-sky-600/30 pb-1">Ranger — Precision Shot</h4>
+                  <p className="text-xs text-amber-200/60">Flat bonus attack damage on every strike</p>
+                  <ConfigSlider label="Bonus Damage" value={config.classAbilities.rangerPrecisionShotBonus} min={0} max={10}
+                    onChange={v => updateCategory('classAbilities', { rangerPrecisionShotBonus: v })} />
+                </div>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

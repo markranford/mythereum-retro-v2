@@ -15,6 +15,16 @@ export const DEFAULT_GAME_CONFIG: GameConfig = {
     minimumDamage: 1,             // guaranteed minimum per attack
   },
 
+  // --- Class Abilities ---
+  classAbilities: {
+    warriorFortifyReduction: 1,      // -1 damage from all incoming attacks
+    mageArcaneSurgeBonusDivisor: 1,  // defense / (2+1) = 33% mitigation instead of 50%
+    rogueCriticalStrikeChance: 0.25, // 25% chance to crit
+    rogueCriticalStrikeMultiplier: 2, // 2x damage on crit
+    healerRejuvenationAmount: 1,     // heal 1 HP to most-damaged ally per round
+    rangerPrecisionShotBonus: 2,     // +2 flat bonus attack damage
+  },
+
   // --- Battle Rewards ---
   battleRewards: {
     victoryXp: 50,

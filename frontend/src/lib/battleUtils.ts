@@ -1,6 +1,6 @@
 import { BattleCard, BattleDeck, Battle, CombatEvent } from '../types/battle';
 import { OwnedHeroCard } from '../types/heroes';
-import { CombatConfig } from '../types/gameConfig';
+import { CombatConfig, ClassAbilitiesConfig } from '../types/gameConfig';
 import { CARD_LIBRARY } from './mockData';
 
 /**
@@ -219,19 +219,113 @@ export interface PlayerTargeting {
 }
 
 /**
- * Simulate one round of battle using attack vs defense-based combat.
+ * Resolve a single attack between two cards, applying class abilities.
+ *
+ * PURE HELPER — does NOT mutate the cards; returns the final damage dealt and
+ * an array of ability log messages that fired during resolution.
+ */
+function resolveAttack(
+  attacker: BattleCard,
+  defender: BattleCard,
+  baseMitDiv: number,
+  baseMinDmg: number,
+  abilities?: ClassAbilitiesConfig,
+): { damage: number; abilityLogs: string[] } {
+  const logs: string[] = [];
+
+  // 1) Base attack value
+  let atkValue = attacker.attack;
+
+  // Ranger — Precision Shot: flat bonus attack
+  if (attacker.class === 'Ranger' && abilities) {
+    const bonus = abilities.rangerPrecisionShotBonus;
+    if (bonus > 0) {
+      atkValue += bonus;
+      logs.push(`${attacker.name} fires a Precision Shot (+${bonus} dmg)`);
+    }
+  }
+
+  // 2) Determine effective mitigation divisor
+  let effectiveMitDiv = baseMitDiv;
+
+  // Mage — Arcane Surge: increase divisor so defense mitigates less
+  if (attacker.class === 'Mage' && abilities) {
+    const bonus = abilities.mageArcaneSurgeBonusDivisor;
+    if (bonus > 0) {
+      effectiveMitDiv += bonus;
+      logs.push(`${attacker.name}'s Arcane Surge pierces armor`);
+    }
+  }
+
+  // 3) Base damage calc
+  let dmg = Math.max(0, atkValue - Math.floor(defender.defense / effectiveMitDiv));
+
+  // Rogue — Critical Strike: chance to multiply damage
+  if (attacker.class === 'Rogue' && abilities) {
+    const chance = abilities.rogueCriticalStrikeChance;
+    const mult = abilities.rogueCriticalStrikeMultiplier;
+    if (chance > 0 && Math.random() < chance) {
+      dmg = Math.floor(dmg * mult);
+      logs.push(`${attacker.name} lands a Critical Strike! (x${mult})`);
+    }
+  }
+
+  // 4) Warrior — Fortify: flat damage reduction on the defender
+  if (defender.class === 'Warrior' && abilities) {
+    const reduction = abilities.warriorFortifyReduction;
+    if (reduction > 0) {
+      dmg = Math.max(0, dmg - reduction);
+      logs.push(`${defender.name}'s Fortify absorbs ${reduction} dmg`);
+    }
+  }
+
+  // 5) Enforce minimum damage
+  dmg = Math.max(baseMinDmg, dmg);
+
+  return { damage: dmg, abilityLogs: logs };
+}
+
+/**
+ * Apply Healer — Rejuvenation to a deck: heal the most-damaged alive card.
+ * Returns a log message if healing occurred, or null.
+ */
+function applyHealerRejuvenation(
+  deckCards: BattleCard[],
+  amount: number,
+): string | null {
+  // Find alive healers
+  const healers = deckCards.filter(c => c.class === 'Healer' && c.currentDefense > 0);
+  if (healers.length === 0 || amount <= 0) return null;
+
+  // Find the most-damaged alive ally (biggest gap between defense and currentDefense)
+  const damagedAllies = deckCards.filter(c => c.currentDefense > 0 && c.currentDefense < c.defense);
+  if (damagedAllies.length === 0) return null;
+
+  damagedAllies.sort((a, b) => (a.currentDefense / a.defense) - (b.currentDefense / b.defense));
+  const target = damagedAllies[0];
+  const healer = healers[0]; // first healer does the healing
+
+  const healAmt = Math.min(amount, target.defense - target.currentDefense);
+  if (healAmt <= 0) return null;
+
+  target.currentDefense += healAmt;
+  return `${healer.name}'s Rejuvenation heals ${target.name} for ${healAmt} HP`;
+}
+
+/**
+ * Simulate one round of battle with class abilities.
  *
  * PURE FUNCTION - No side effects, no mutations.
  * Deep copies input battle state before applying any logic.
  *
  * Combat Flow:
+ *   Pre-combat — Healer Rejuvenation triggers for both sides
  *   Phase 1 — Deck 1 (player) attacks Deck 2 (AI)
  *     • If `targeting` is provided the chosen attacker/target are used
  *     • Otherwise a random attacker/target pair is selected
- *   Phase 2 — Deck 2 (AI) counterattacks Deck 1
- *     • Always random (AI has no targeting UI)
- *
- * Each phase records a CombatEvent so the UI can replay/animate every strike.
+ *     • Class abilities modify damage (Ranger +dmg, Mage pierce, Rogue crit, Warrior absorb)
+ *   Phase 2 — Deck 2 (AI) counterattacks Deck 1 (always random)
+ *   Post-combat — Victory check
  *
  * Returns new battle state with combat results.
  * Never mutates input battle state.
@@ -240,6 +334,7 @@ export function simulateBattleRound(
   battle: Battle,
   combatConfig?: CombatConfig,
   targeting?: PlayerTargeting,
+  abilitiesConfig?: ClassAbilitiesConfig,
 ): Battle {
   // Deep copy to prevent mutation - CRITICAL for React state integrity
   const next = deepCloneBattle(battle);
@@ -272,20 +367,34 @@ export function simulateBattleRound(
   const mitDiv = combatConfig?.damageMitigationDivisor ?? 2;
   const minDmg = combatConfig?.minimumDamage ?? 1;
 
+  // === PRE-COMBAT: Healer Rejuvenation for both sides ===
+  if (abilitiesConfig && abilitiesConfig.healerRejuvenationAmount > 0) {
+    const healLog1 = applyHealerRejuvenation(next.deck1.cards, abilitiesConfig.healerRejuvenationAmount);
+    if (healLog1) next.log.push({ message: healLog1, category: 'action' });
+
+    const healLog2 = applyHealerRejuvenation(next.deck2.cards, abilitiesConfig.healerRejuvenationAmount);
+    if (healLog2) next.log.push({ message: healLog2, category: 'action' });
+  }
+
+  // Refresh live cards (healing may have changed nothing, but be safe)
+  const live1 = next.deck1.cards.filter(c => c.currentDefense > 0);
+  const live2 = next.deck2.cards.filter(c => c.currentDefense > 0);
+
   // === PHASE 1: Deck 1 attacks Deck 2 ===
-  // Resolve attacker — player-chosen or random
   const attacker1 = (targeting?.attackerInstanceId != null
-    ? deck1Cards.find(c => c.instanceId === targeting.attackerInstanceId)
-    : undefined) ?? deck1Cards[Math.floor(Math.random() * deck1Cards.length)];
+    ? live1.find(c => c.instanceId === targeting.attackerInstanceId)
+    : undefined) ?? live1[Math.floor(Math.random() * live1.length)];
 
-  // Resolve defender — player-targeted or random
   const defender1 = (targeting?.targetInstanceId != null
-    ? deck2Cards.find(c => c.instanceId === targeting.targetInstanceId)
-    : undefined) ?? deck2Cards[Math.floor(Math.random() * deck2Cards.length)];
+    ? live2.find(c => c.instanceId === targeting.targetInstanceId)
+    : undefined) ?? live2[Math.floor(Math.random() * live2.length)];
 
-  const baseDmg1 = attacker1.attack;
-  const mitigated1 = Math.max(0, baseDmg1 - Math.floor(defender1.defense / mitDiv));
-  const dmg1 = Math.max(minDmg, mitigated1);
+  const { damage: dmg1, abilityLogs: aLogs1 } = resolveAttack(attacker1, defender1, mitDiv, minDmg, abilitiesConfig);
+
+  // Log ability triggers
+  for (const aLog of aLogs1) {
+    next.log.push({ message: aLog, category: 'action' });
+  }
 
   const defIdx1 = next.deck2.cards.findIndex(c => c.instanceId === defender1.instanceId);
   let defender1Destroyed = false;
@@ -318,9 +427,11 @@ export function simulateBattleRound(
     const attacker2 = liveDeck2[Math.floor(Math.random() * liveDeck2.length)];
     const defender2 = liveDeck1[Math.floor(Math.random() * liveDeck1.length)];
 
-    const baseDmg2 = attacker2.attack;
-    const mitigated2 = Math.max(0, baseDmg2 - Math.floor(defender2.defense / mitDiv));
-    const dmg2 = Math.max(minDmg, mitigated2);
+    const { damage: dmg2, abilityLogs: aLogs2 } = resolveAttack(attacker2, defender2, mitDiv, minDmg, abilitiesConfig);
+
+    for (const aLog of aLogs2) {
+      next.log.push({ message: aLog, category: 'action' });
+    }
 
     const defIdx2 = next.deck1.cards.findIndex(c => c.instanceId === defender2.instanceId);
     let defender2Destroyed = false;

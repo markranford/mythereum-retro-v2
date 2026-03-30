@@ -3,7 +3,7 @@ import { Battle, BattleCard } from '../../types/battle';
 import { OwnedHeroCard } from '../../types/heroes';
 import { buildBattleDeck, buildAiDeck, initializeBattle, simulateBattleRound, PlayerTargeting } from '../../lib/battleUtils';
 import { useGameConfig } from '../../context/GameConfigContext';
-import { CombatConfig } from '../../types/gameConfig';
+import { CombatConfig, ClassAbilitiesConfig } from '../../types/gameConfig';
 import { Button } from '../ui/button';
 import { Card, CardContent } from '../ui/card';
 import BattleLog from './BattleLog';
@@ -40,8 +40,9 @@ export default function GameBoard({
   battleId,
   timerDuration,
 }: GameBoardProps) {
-  const { combat: combatConfig } = useGameConfig();
+  const { combat: combatConfig, classAbilities: abilitiesConfig } = useGameConfig();
   const combatConfigRef = useRef<CombatConfig>(combatConfig);
+  const abilitiesConfigRef = useRef<ClassAbilitiesConfig>(abilitiesConfig);
 
   const [battle, setBattle] = useState<Battle | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -52,6 +53,7 @@ export default function GameBoard({
 
   // Refs for stable state tracking
   useEffect(() => { combatConfigRef.current = combatConfig; }, [combatConfig]);
+  useEffect(() => { abilitiesConfigRef.current = abilitiesConfig; }, [abilitiesConfig]);
   const battleEndedRef = useRef(false);
   const usedHeroIdsRef = useRef<string[]>([]);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -118,7 +120,7 @@ export default function GameBoard({
     if (!battle || isProcessing || battle.winner !== null) return;
 
     setIsProcessing(true);
-    const nextBattle = simulateBattleRound(battle, combatConfigRef.current, targeting);
+    const nextBattle = simulateBattleRound(battle, combatConfigRef.current, targeting, abilitiesConfigRef.current);
     setBattle(nextBattle);
     setIsProcessing(false);
     setSelectedAttacker(null);
@@ -172,7 +174,7 @@ export default function GameBoard({
       setBattle(prevBattle => {
         if (!prevBattle || prevBattle.winner !== null || battleEndedRef.current) return prevBattle;
 
-        const nextBattle = simulateBattleRound(prevBattle, combatConfigRef.current);
+        const nextBattle = simulateBattleRound(prevBattle, combatConfigRef.current, undefined, abilitiesConfigRef.current);
 
         setTimeout(() => {
           if (nextBattle.winner !== null && !battleEndedRef.current) {
@@ -210,6 +212,18 @@ export default function GameBoard({
       </div>
     );
   }
+
+  /** Get the passive ability name and color for a card's class */
+  const getAbilityBadge = (cardClass?: string): { name: string; color: string } | null => {
+    switch (cardClass) {
+      case 'Warrior': return { name: 'Fortify', color: 'bg-yellow-700/50 text-yellow-300' };
+      case 'Mage':    return { name: 'Arcane Surge', color: 'bg-purple-700/50 text-purple-300' };
+      case 'Rogue':   return { name: 'Critical Strike', color: 'bg-emerald-700/50 text-emerald-300' };
+      case 'Healer':  return { name: 'Rejuvenation', color: 'bg-green-700/50 text-green-300' };
+      case 'Ranger':  return { name: 'Precision Shot', color: 'bg-sky-700/50 text-sky-300' };
+      default: return null;
+    }
+  };
 
   const deck1Cards = battle.deck1.cards;
   const deck2Cards = battle.deck2.cards;
@@ -303,6 +317,16 @@ export default function GameBoard({
               <span className="text-gray-400 text-[10px] uppercase">{card.class}</span>
             )}
           </div>
+
+          {/* Ability badge */}
+          {isAlive && (() => {
+            const badge = getAbilityBadge(card.class);
+            return badge ? (
+              <div className={`mt-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded inline-block ${badge.color}`}>
+                {badge.name}
+              </div>
+            ) : null;
+          })()}
 
           {/* Damage number flash */}
           {wasAttacked && lastRoundEvent && (

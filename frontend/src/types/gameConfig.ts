@@ -17,6 +17,23 @@ export interface CombatConfig {
   minimumDamage: number;
 }
 
+// === Class Abilities ===
+
+export interface ClassAbilitiesConfig {
+  /** Warrior — Fortify: flat damage reduction on incoming attacks */
+  warriorFortifyReduction: number;
+  /** Mage — Arcane Surge: bonus added to mitigation divisor (higher = pierce more defense) */
+  mageArcaneSurgeBonusDivisor: number;
+  /** Rogue — Critical Strike: chance (0-1) to deal double damage */
+  rogueCriticalStrikeChance: number;
+  /** Rogue — Critical Strike: damage multiplier when crit lands */
+  rogueCriticalStrikeMultiplier: number;
+  /** Healer — Rejuvenation: HP healed to most-damaged ally each round */
+  healerRejuvenationAmount: number;
+  /** Ranger — Precision Shot: flat bonus attack damage */
+  rangerPrecisionShotBonus: number;
+}
+
 // === Battle Rewards ===
 
 export interface BattleRewardsConfig {
@@ -144,6 +161,7 @@ export interface CardOverride {
 
 export interface GameConfig {
   combat: CombatConfig;
+  classAbilities: ClassAbilitiesConfig;
   battleRewards: BattleRewardsConfig;
   heroProgression: HeroProgressionConfig;
   economyStarting: EconomyStartingConfig;
