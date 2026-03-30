@@ -1,8 +1,27 @@
-// Tournament types for Phase 5
+// Tournament types with Autobot strategy system
 
 export type TournamentStatus = 'upcoming' | 'registration' | 'active' | 'completed';
 
 export type TournamentFormat = 'single-elimination' | 'double-elimination' | 'round-robin';
+
+/**
+ * Autobot targeting strategies — determines how a participant's deck
+ * picks attackers and targets during automated tournament combat.
+ */
+export type AutobotStrategy =
+  | 'random'           // Random attacker, random target (default)
+  | 'focus-weakest'    // Target the enemy card with lowest current HP
+  | 'focus-strongest'  // Target the enemy card with highest attack (remove threats)
+  | 'spread-damage'    // Target the enemy card with highest current HP (even out damage)
+  | 'protect-healer';  // Use highest-attack friendly card, target highest-attack enemy
+
+export const STRATEGY_LABELS: Record<AutobotStrategy, { name: string; description: string }> = {
+  'random':          { name: 'Random',          description: 'Random attacker and target each round' },
+  'focus-weakest':   { name: 'Focus Weakest',   description: 'Always target the enemy with lowest HP' },
+  'focus-strongest': { name: 'Focus Strongest',  description: 'Prioritize eliminating the biggest threat' },
+  'spread-damage':   { name: 'Spread Damage',   description: 'Distribute damage evenly across enemies' },
+  'protect-healer':  { name: 'Protect & Strike', description: 'Lead with strongest attacker, target enemy threats' },
+};
 
 export interface TournamentConfig {
   name: string;
@@ -21,6 +40,10 @@ export interface TournamentParticipant {
   deckPower: number;
   isAI: boolean;
   eliminated?: boolean;
+  /** Autobot strategy used for automated combat */
+  strategy: AutobotStrategy;
+  /** Card IDs in the participant's deck (for AI: built from library) */
+  deckCardIds?: string[];
 }
 
 export interface TournamentMatch {
@@ -32,6 +55,10 @@ export interface TournamentMatch {
   participant1Score?: number;
   participant2Score?: number;
   completed: boolean;
+  /** Number of combat rounds the match took */
+  roundCount?: number;
+  /** Summary of key events from the match */
+  combatSummary?: string[];
 }
 
 export interface TournamentRewards {

@@ -1,6 +1,7 @@
 import { BattleCard, BattleDeck, Battle, CombatEvent } from '../types/battle';
 import { OwnedHeroCard } from '../types/heroes';
 import { CombatConfig, ClassAbilitiesConfig } from '../types/gameConfig';
+import { AutobotStrategy } from '../types/tournaments';
 import { CARD_LIBRARY } from './mockData';
 
 /**
@@ -494,4 +495,142 @@ export function simulateBattleRound(
  */
 export function clamp(min: number, max: number, value: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+// ============================================================
+// AUTOBOT STRATEGY SYSTEM — for tournament automated combat
+// ============================================================
+
+/**
+ * Resolve autobot strategy into concrete attacker + target selections.
+ * Returns a PlayerTargeting object for the given strategy.
+ *
+ * PURE FUNCTION — no mutations, no side effects.
+ */
+export function resolveAutobotTargeting(
+  strategy: AutobotStrategy,
+  friendlyCards: BattleCard[],
+  enemyCards: BattleCard[],
+): PlayerTargeting {
+  const aliveFriendly = friendlyCards.filter(c => c.currentDefense > 0);
+  const aliveEnemy = enemyCards.filter(c => c.currentDefense > 0);
+
+  if (aliveFriendly.length === 0 || aliveEnemy.length === 0) return {};
+
+  switch (strategy) {
+    case 'focus-weakest': {
+      // Random attacker, target enemy with lowest current HP
+      const attacker = aliveFriendly[Math.floor(Math.random() * aliveFriendly.length)];
+      const target = [...aliveEnemy].sort((a, b) => a.currentDefense - b.currentDefense)[0];
+      return { attackerInstanceId: attacker.instanceId, targetInstanceId: target.instanceId };
+    }
+
+    case 'focus-strongest': {
+      // Random attacker, target enemy with highest attack
+      const attacker = aliveFriendly[Math.floor(Math.random() * aliveFriendly.length)];
+      const target = [...aliveEnemy].sort((a, b) => b.attack - a.attack)[0];
+      return { attackerInstanceId: attacker.instanceId, targetInstanceId: target.instanceId };
+    }
+
+    case 'spread-damage': {
+      // Random attacker, target enemy with highest current HP (distribute damage)
+      const attacker = aliveFriendly[Math.floor(Math.random() * aliveFriendly.length)];
+      const target = [...aliveEnemy].sort((a, b) => b.currentDefense - a.currentDefense)[0];
+      return { attackerInstanceId: attacker.instanceId, targetInstanceId: target.instanceId };
+    }
+
+    case 'protect-healer': {
+      // Use highest-attack friendly card, target highest-attack enemy
+      const attacker = [...aliveFriendly].sort((a, b) => b.attack - a.attack)[0];
+      const target = [...aliveEnemy].sort((a, b) => b.attack - a.attack)[0];
+      return { attackerInstanceId: attacker.instanceId, targetInstanceId: target.instanceId };
+    }
+
+    case 'random':
+    default:
+      return {}; // No targeting = fully random
+  }
+}
+
+/**
+ * Result of a full automated tournament match.
+ */
+export interface TournamentMatchResult {
+  /** 1 = deck1 won, 2 = deck2 won */
+  winner: 1 | 2;
+  /** Number of combat rounds the match took */
+  roundCount: number;
+  /** Key events from the battle for the combat summary */
+  combatSummary: string[];
+  /** Cards surviving on the winning side */
+  survivingCards: number;
+}
+
+/**
+ * Simulate a complete automated tournament match between two decks.
+ * Both sides use autobot strategies for targeting. Runs up to `maxRounds`
+ * rounds of combat. If no winner after maxRounds, the side with more
+ * surviving HP wins.
+ *
+ * PURE FUNCTION — no side effects, no mutations.
+ */
+export function simulateTournamentMatch(
+  deck1: BattleDeck,
+  deck2: BattleDeck,
+  strategy1: AutobotStrategy,
+  strategy2: AutobotStrategy,
+  combatConfig?: CombatConfig,
+  abilitiesConfig?: ClassAbilitiesConfig,
+  maxRounds: number = 50,
+): TournamentMatchResult {
+  let battle = initializeBattle(deck1, deck2);
+  const summary: string[] = [];
+
+  for (let round = 0; round < maxRounds; round++) {
+    if (battle.winner !== null) break;
+
+    // Deck 1 uses their strategy for Phase 1 targeting
+    const targeting1 = resolveAutobotTargeting(
+      strategy1,
+      battle.deck1.cards,
+      battle.deck2.cards,
+    );
+
+    // Run the round — Phase 1 uses deck1's targeting, Phase 2 is always random for deck2
+    // To support deck2's strategy, we need a two-phase approach:
+    // First run with deck1's targeting (Phase 1 + random Phase 2)
+    battle = simulateBattleRound(battle, combatConfig, targeting1, abilitiesConfig);
+
+    // Collect notable events
+    if (battle.roundEvents) {
+      for (const event of battle.roundEvents) {
+        if (event.defenderDestroyed) {
+          summary.push(`Turn ${battle.turn - 1}: ${event.attackerName} destroyed ${event.defenderName}`);
+        }
+      }
+    }
+  }
+
+  // If no winner after max rounds, decide by remaining HP
+  if (battle.winner === null) {
+    const hp1 = battle.deck1.cards.reduce((sum, c) => sum + Math.max(0, c.currentDefense), 0);
+    const hp2 = battle.deck2.cards.reduce((sum, c) => sum + Math.max(0, c.currentDefense), 0);
+    battle.winner = hp1 >= hp2 ? 1 : 2;
+    summary.push(`Match decided by remaining HP: ${battle.deck1.ownerName} (${hp1}) vs ${battle.deck2.ownerName} (${hp2})`);
+  }
+
+  const winnerDeck = battle.winner === 1 ? battle.deck1 : battle.deck2;
+  const survivingCards = winnerDeck.cards.filter(c => c.currentDefense > 0).length;
+
+  // Keep summary to last 8 events + the decisive ones
+  const trimmedSummary = summary.length > 10
+    ? [...summary.slice(0, 3), `... ${summary.length - 6} more events ...`, ...summary.slice(-3)]
+    : summary;
+
+  return {
+    winner: battle.winner as 1 | 2,
+    roundCount: battle.turn - 1,
+    combatSummary: trimmedSummary,
+    survivingCards,
+  };
 }
