@@ -8,11 +8,21 @@ Strategic card battle game on the Internet Computer. React 19 + TypeScript front
 
 ## Quick Reference
 
-### Key Files for Battle System
-- `frontend/src/lib/battleUtils.ts` -- Pure battle logic (no React)
+### Key Files for Battle System (Original Mythereum Leader Combat)
+- `frontend/src/lib/battleUtils.ts` -- Pure battle logic: leader vs leader, magick, abilities
 - `frontend/src/pages/BattlegroundsPage.tsx` -- Lobby + battle orchestration
-- `frontend/src/components/battle/GameBoard.tsx` -- Battle UI + turn controls
-- `frontend/src/types/battle.ts` -- BattleCard, BattleDeck, Battle types
+- `frontend/src/components/battle/GameBoard.tsx` -- Battle UI: leader cards, hand, magick, abilities
+- `frontend/src/types/battle.ts` -- BattleCard, BattleDeck (leader+hand+graveyard+playerHp+magick), Battle
+- `frontend/src/types/game.ts` -- CardData with MagickGeneration, CardAbility, MagickCost, CardEdition
+- `frontend/src/lib/mockData.ts` -- Card library with abilities, magick gen, HP modifiers
+
+### Combat Model (Original Mythereum)
+- **Leader system**: 1 leader on field, rest in hand (4 cards). Swap leader each turn.
+- **Player HP**: Separate from card HP. Excess damage after leader dies hits player HP. Game over at 0.
+- **Magick**: 3 colors (White, Black, Grey). Cards generate magick % per round. Abilities cost magick.
+- **Abilities**: Each card has an activated ability (e.g., Hide, Annihilate, Shield Wall, Drain).
+- **Editions**: Genesis (red border), Awakening (blue border), Survivor (dark border).
+- **Deck size**: 5 cards minimum (1 leader + 4 hand).
 
 ### Context Architecture
 All 9 contexts follow the **stable callback pattern**:

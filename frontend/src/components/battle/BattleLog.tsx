@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { ScrollArea } from '../ui/scroll-area';
 
 interface BattleLogProps {
-  messages: Array<{ message: string; category: 'upkeep' | 'action' | 'combat' | 'system' }>;
+  messages: Array<{ message: string; category: 'upkeep' | 'action' | 'combat' | 'system' | 'magick' | 'ability' }>;
 }
 
 /**
@@ -26,7 +26,11 @@ export default function BattleLog({ messages }: BattleLogProps) {
       case 'combat':
         return 'text-red-400'; // Crimson for combat
       case 'action':
-        return 'text-blue-400'; // Blue for magick/actions
+        return 'text-blue-400'; // Blue for actions
+      case 'magick':
+        return 'text-purple-400'; // Purple for magick generation
+      case 'ability':
+        return 'text-fuchsia-400'; // Fuchsia for ability activation
       case 'upkeep':
         return 'text-gray-400'; // Grey for upkeep
       default:

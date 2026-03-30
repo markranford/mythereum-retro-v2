@@ -8,13 +8,34 @@
 
 import { ResourceAmount } from './economy';
 
-// === Combat ===
+// === Combat (Original Mythereum Leader System) ===
 
 export interface CombatConfig {
   /** Divisor for defender's defense stat in damage calc. Higher = less mitigation. Default: 2 (50%) */
   damageMitigationDivisor: number;
   /** Minimum damage per attack, even against high defense. Default: 1 */
   minimumDamage: number;
+  /** Base player HP before deck power adjustments. Default: 100 */
+  basePlayerHp: number;
+  /** How much total deck power reduces player HP. Formula: HP = base - (deckPower * divisor). Default: 0.5 */
+  deckPowerHpDivisor: number;
+  /** Minimum player HP regardless of deck power. Default: 20 */
+  minimumPlayerHp: number;
+  /** Maximum rounds before tiebreaker. Default: 30 */
+  maxRounds: number;
+}
+
+// === Magick System ===
+
+export interface MagickConfig {
+  /** Base magick generation multiplier (applied to card's magickGeneration %). Default: 1.0 */
+  generationMultiplier: number;
+  /** Whether hand cards also generate magick (true = original rules). Default: true */
+  handCardsGenerateMagick: boolean;
+  /** Starting magick points per color. Default: 0 */
+  startingWhite: number;
+  startingBlack: number;
+  startingGrey: number;
 }
 
 // === Class Abilities ===
@@ -161,6 +182,7 @@ export interface CardOverride {
 
 export interface GameConfig {
   combat: CombatConfig;
+  magick: MagickConfig;
   classAbilities: ClassAbilitiesConfig;
   battleRewards: BattleRewardsConfig;
   heroProgression: HeroProgressionConfig;

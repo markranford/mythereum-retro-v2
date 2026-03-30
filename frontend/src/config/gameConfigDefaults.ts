@@ -9,10 +9,23 @@
 import { GameConfig } from '../types/gameConfig';
 
 export const DEFAULT_GAME_CONFIG: GameConfig = {
-  // --- Combat ---
+  // --- Combat (Original Mythereum Leader System) ---
   combat: {
     damageMitigationDivisor: 2,   // defense / 2 = 50% mitigation
     minimumDamage: 1,             // guaranteed minimum per attack
+    basePlayerHp: 200,            // base HP before deck power adjustment
+    deckPowerHpDivisor: 0.3,      // higher deck power = lower player HP (0.3 = 30% penalty)
+    minimumPlayerHp: 40,          // floor for player HP
+    maxRounds: 30,                // max rounds before tiebreaker
+  },
+
+  // --- Magick System ---
+  magick: {
+    generationMultiplier: 1.0,
+    handCardsGenerateMagick: true,
+    startingWhite: 0,
+    startingBlack: 0,
+    startingGrey: 0,
   },
 
   // --- Class Abilities ---

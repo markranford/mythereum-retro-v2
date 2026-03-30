@@ -145,6 +145,7 @@ export default function AdminGameConfigPage() {
       <Tabs defaultValue="combat" className="w-full">
         <TabsList className="bg-amber-950/50 border border-amber-600/40 flex-wrap h-auto gap-1 p-1">
           <TabsTrigger value="combat" className="data-[state=active]:bg-amber-600/30 data-[state=active]:text-amber-300">Combat</TabsTrigger>
+          <TabsTrigger value="magick" className="data-[state=active]:bg-amber-600/30 data-[state=active]:text-amber-300">Magick</TabsTrigger>
           <TabsTrigger value="abilities" className="data-[state=active]:bg-amber-600/30 data-[state=active]:text-amber-300">Abilities</TabsTrigger>
           <TabsTrigger value="rewards" className="data-[state=active]:bg-amber-600/30 data-[state=active]:text-amber-300">Rewards</TabsTrigger>
           <TabsTrigger value="heroes" className="data-[state=active]:bg-amber-600/30 data-[state=active]:text-amber-300">Heroes</TabsTrigger>
@@ -165,6 +166,31 @@ export default function AdminGameConfigPage() {
                 onChange={v => updateCategory('combat', { damageMitigationDivisor: v })} unit="x" />
               <ConfigSlider label="Minimum Damage per Attack" value={config.combat.minimumDamage} min={0} max={10}
                 onChange={v => updateCategory('combat', { minimumDamage: v })} />
+              <ConfigSlider label="Base Player HP" value={config.combat.basePlayerHp} min={50} max={500}
+                onChange={v => updateCategory('combat', { basePlayerHp: v })} />
+              <ConfigSlider label="Deck Power HP Divisor (higher = more penalty)" value={config.combat.deckPowerHpDivisor} min={0} max={2} step={0.1}
+                onChange={v => updateCategory('combat', { deckPowerHpDivisor: v })} unit="x" />
+              <ConfigSlider label="Minimum Player HP" value={config.combat.minimumPlayerHp} min={5} max={100}
+                onChange={v => updateCategory('combat', { minimumPlayerHp: v })} />
+              <ConfigSlider label="Max Rounds (tiebreaker)" value={config.combat.maxRounds} min={10} max={100}
+                onChange={v => updateCategory('combat', { maxRounds: v })} />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Magick System */}
+        <TabsContent value="magick">
+          <Card className="bg-gradient-to-b from-slate-900/90 to-slate-800/80 border-2 border-purple-600/40">
+            <CardContent className="p-6 space-y-6">
+              <CategoryHeader title="Magick System" icon={<Swords className="w-5 h-5" />} onReset={() => resetCategory('magick')} />
+              <ConfigSlider label="Generation Multiplier" value={config.magick.generationMultiplier} min={0.1} max={5} step={0.1}
+                onChange={v => updateCategory('magick', { generationMultiplier: v })} unit="x" />
+              <ConfigSlider label="Starting White Magick" value={config.magick.startingWhite} min={0} max={10}
+                onChange={v => updateCategory('magick', { startingWhite: v })} />
+              <ConfigSlider label="Starting Black Magick" value={config.magick.startingBlack} min={0} max={10}
+                onChange={v => updateCategory('magick', { startingBlack: v })} />
+              <ConfigSlider label="Starting Grey Magick" value={config.magick.startingGrey} min={0} max={10}
+                onChange={v => updateCategory('magick', { startingGrey: v })} />
             </CardContent>
           </Card>
         </TabsContent>

@@ -185,8 +185,8 @@ function BattlegroundsContent() {
       }
       
       const selectedDeck = heroesContext.decksWithPower.find(d => d.id === selectedDeckId);
-      if (!selectedDeck || selectedDeck.cardCount < 7) {
-        setError('Deck must have at least 7 cards to battle');
+      if (!selectedDeck || selectedDeck.cardCount < 5) {
+        setError('Deck must have at least 5 cards to battle');
         return;
       }
 
@@ -195,8 +195,8 @@ function BattlegroundsContent() {
         selectedDeck.cardInstanceIds.includes(h.instanceId)
       );
 
-      if (deckHeroes.length < 7) {
-        setError('Deck must have at least 7 cards to battle. Cards may have been removed.');
+      if (deckHeroes.length < 5) {
+        setError('Deck must have at least 5 cards to battle. Cards may have been removed.');
         return;
       }
 
@@ -637,7 +637,7 @@ function BattlegroundsContent() {
 
           <div className="space-y-6 py-4">
             <div className="space-y-3">
-              <Label className="text-amber-300 font-semibold">Select Your Deck (≥7 cards required):</Label>
+              <Label className="text-amber-300 font-semibold">Select Your Deck (≥5 cards required):</Label>
               <Select value={selectedDeckId} onValueChange={setSelectedDeckId}>
                 <SelectTrigger className="bg-slate-900/70 border-amber-600/40 text-amber-200">
                   <SelectValue placeholder="Choose a deck..." />
@@ -651,7 +651,7 @@ function BattlegroundsContent() {
                       className="text-amber-200 focus:bg-amber-600/20 focus:text-amber-300"
                     >
                       {deck.name} - {deck.cardCount} cards (Power: {deck.totalPower})
-                      {deck.cardCount < 7 && ' - Need 7+ cards'}
+                      {deck.cardCount < 5 && ' - Need 5+ cards'}
                     </SelectItem>
                   ))}
                 </SelectContent>

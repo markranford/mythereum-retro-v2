@@ -210,8 +210,8 @@ export function TournamentsProvider({ children }: { children: React.ReactNode })
         const aiName = AI_NAMES[aiIndex % AI_NAMES.length];
         const aiStrategy = AI_STRATEGIES[Math.floor(Math.random() * AI_STRATEGIES.length)];
 
-        // Build a real AI deck from the card library
-        const deckSize = 7;
+        // Build a real AI deck from the card library (5 cards: 1 leader + 4 hand)
+        const deckSize = 5;
         const availableCards = CARD_LIBRARY.filter(c => c.cardType === 'Hero');
         const aiCardIds: string[] = [];
         for (let j = 0; j < deckSize; j++) {
@@ -400,7 +400,7 @@ function buildParticipantDeck(participant: TournamentParticipant, allHeroes: Own
   if (participant.isAI) {
     // AI: build deck from their stored card IDs
     return buildAiDeck(
-      participant.deckCardIds?.length || 7,
+      participant.deckCardIds?.length || 5,
       participant.deckPower,
       participant.name,
     );
@@ -413,7 +413,7 @@ function buildParticipantDeck(participant: TournamentParticipant, allHeroes: Own
 
   if (deckHeroes.length === 0) {
     // Fallback: build AI-style deck if heroes aren't available
-    return buildAiDeck(7, participant.deckPower, participant.name);
+    return buildAiDeck(5, participant.deckPower, participant.name);
   }
 
   return buildBattleDeck(deckHeroes, participant.name);

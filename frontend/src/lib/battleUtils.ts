@@ -1,49 +1,62 @@
-import { BattleCard, BattleDeck, Battle, CombatEvent } from '../types/battle';
+import { BattleCard, BattleDeck, Battle, CombatEvent, MagickPool } from '../types/battle';
 import { OwnedHeroCard } from '../types/heroes';
-import { CombatConfig, ClassAbilitiesConfig } from '../types/gameConfig';
+import { CombatConfig, ClassAbilitiesConfig, MagickConfig } from '../types/gameConfig';
 import { AutobotStrategy } from '../types/tournaments';
 import { CARD_LIBRARY } from './mockData';
+import { MagickCost, CardAbility } from '../types/game';
 
 /**
- * battleUtils.ts - Pure utility functions for battle system.
- * 
+ * battleUtils.ts - Pure utility functions for Original Mythereum battle system.
+ *
+ * LEADER COMBAT MODEL:
+ * - Each player has 1 Leader on the field, rest in hand (4 cards)
+ * - Leaders attack each other simultaneously each turn
+ * - When a leader dies, excess damage hits player HP
+ * - Player picks a new leader from hand (or auto-selects)
+ * - Player HP reaching 0 = defeat
+ * - Magick accumulates from all cards (leader + hand), abilities cost Magick
+ *
  * CRITICAL REQUIREMENTS:
- * - NO React imports (useState, useEffect, etc.)
- * - NO hooks of any kind
+ * - NO React imports
+ * - NO hooks
  * - NO state mutation - all functions return new objects
  * - Deep copy all nested structures before modifications
- * - Pure functions only - same input always produces same output
+ * - Pure functions only
  */
 
-/**
- * Deep clone a battle card to prevent state mutation.
- * Essential for maintaining React state immutability.
- * Creates a new object with all nested properties copied.
- */
+// ============================================================
+// DEEP CLONE HELPERS
+// ============================================================
+
 function deepCloneCard(card: BattleCard): BattleCard {
   return {
     ...card,
     manaRequirement: card.manaRequirement ? { ...card.manaRequirement } : undefined,
+    magickGeneration: card.magickGeneration ? { ...card.magickGeneration } : undefined,
+    ability: card.ability ? {
+      ...card.ability,
+      cost: { ...card.ability.cost },
+      effect: { ...card.ability.effect } as any,
+    } : undefined,
     tags: card.tags ? [...card.tags] : undefined,
   };
 }
 
-/**
- * Deep clone a battle deck to prevent state mutation.
- * Recursively clones all cards in the deck.
- */
+function deepCloneMagick(pool: MagickPool): MagickPool {
+  return { ...pool };
+}
+
 function deepCloneDeck(deck: BattleDeck): BattleDeck {
   return {
     ...deck,
     cards: deck.cards.map(deepCloneCard),
+    leader: deck.leader ? deepCloneCard(deck.leader) : null,
+    hand: deck.hand.map(deepCloneCard),
+    graveyard: deck.graveyard.map(deepCloneCard),
+    magick: deepCloneMagick(deck.magick),
   };
 }
 
-/**
- * Deep clone entire battle state to prevent state mutation.
- * All state updates MUST use deep copies to avoid React corruption.
- * This is the primary guard against accidental mutations.
- */
 export function deepCloneBattle(battle: Battle): Battle {
   return {
     ...battle,
@@ -55,40 +68,146 @@ export function deepCloneBattle(battle: Battle): Battle {
   };
 }
 
+// ============================================================
+// MAGICK HELPERS
+// ============================================================
+
+function createMagickPool(startWhite = 0, startBlack = 0, startGrey = 0): MagickPool {
+  return {
+    white: startWhite,
+    black: startBlack,
+    grey: startGrey,
+    whiteAccum: 0,
+    blackAccum: 0,
+    greyAccum: 0,
+  };
+}
+
 /**
- * Build battle deck from owned hero cards with proper stat population.
- * 
- * PURE FUNCTION - No side effects, no mutations.
- * 
- * Stat Logic:
- * - attack: Offensive power from card data or derived from power/2
- * - defense: Defensive structure from card data or derived from power/2
- * - hp: Current hit points (equals defense for simplicity)
- * - currentDefense: Starts at full defense value
- * - cost: Mana cost from dynamic balancer or card defaults
- * 
- * The totalPower is recomputed as sum of (attack + defense) for all cards.
- * This ensures consistency even if individual card stats change.
+ * Generate magick for a deck based on all cards' magickGeneration rates.
+ * Each card's % is accumulated; when accumulator reaches 100, +1 magick point.
+ */
+function generateMagick(
+  deck: BattleDeck,
+  magickConfig?: MagickConfig,
+): string[] {
+  const logs: string[] = [];
+  const mult = magickConfig?.generationMultiplier ?? 1.0;
+  const handGenerates = magickConfig?.handCardsGenerateMagick ?? true;
+
+  // Collect all cards that generate magick
+  const generators: BattleCard[] = [];
+  if (deck.leader) generators.push(deck.leader);
+  if (handGenerates) generators.push(...deck.hand);
+
+  let totalWhite = 0, totalBlack = 0, totalGrey = 0;
+
+  for (const card of generators) {
+    if (!card.magickGeneration) continue;
+    totalWhite += Math.floor(card.magickGeneration.white * mult);
+    totalBlack += Math.floor(card.magickGeneration.black * mult);
+    totalGrey += Math.floor(card.magickGeneration.grey * mult);
+  }
+
+  // Accumulate and convert
+  deck.magick.whiteAccum += totalWhite;
+  deck.magick.blackAccum += totalBlack;
+  deck.magick.greyAccum += totalGrey;
+
+  const whiteGained = Math.floor(deck.magick.whiteAccum / 100);
+  const blackGained = Math.floor(deck.magick.blackAccum / 100);
+  const greyGained = Math.floor(deck.magick.greyAccum / 100);
+
+  deck.magick.whiteAccum %= 100;
+  deck.magick.blackAccum %= 100;
+  deck.magick.greyAccum %= 100;
+
+  deck.magick.white += whiteGained;
+  deck.magick.black += blackGained;
+  deck.magick.grey += greyGained;
+
+  const gained: string[] = [];
+  if (whiteGained > 0) gained.push(`+${whiteGained} White`);
+  if (blackGained > 0) gained.push(`+${blackGained} Black`);
+  if (greyGained > 0) gained.push(`+${greyGained} Grey`);
+
+  if (gained.length > 0) {
+    logs.push(`${deck.ownerName} generates ${gained.join(', ')} Magick`);
+  }
+
+  return logs;
+}
+
+/**
+ * Check if a player can afford an ability's magick cost.
+ */
+export function canAffordAbility(pool: MagickPool, cost: MagickCost): boolean {
+  if ((cost.white || 0) > pool.white) return false;
+  if ((cost.black || 0) > pool.black) return false;
+  if ((cost.grey || 0) > pool.grey) return false;
+  return true;
+}
+
+/**
+ * Spend magick from pool. Returns true if successful.
+ */
+function spendMagick(pool: MagickPool, cost: MagickCost): boolean {
+  if (!canAffordAbility(pool, cost)) return false;
+  pool.white -= (cost.white || 0);
+  pool.black -= (cost.black || 0);
+  pool.grey -= (cost.grey || 0);
+  return true;
+}
+
+/** Total magick cost for display */
+export function totalMagickCost(cost: MagickCost): number {
+  return (cost.white || 0) + (cost.black || 0) + (cost.grey || 0);
+}
+
+// ============================================================
+// DECK BUILDING
+// ============================================================
+
+/**
+ * Calculate player HP from deck cards.
+ * Higher total power = lower player HP (risk/reward trade-off from original game).
+ */
+function calculatePlayerHp(
+  cards: BattleCard[],
+  combatConfig?: CombatConfig,
+): { hp: number; maxHp: number } {
+  const baseHp = combatConfig?.basePlayerHp ?? 100;
+  const divisor = combatConfig?.deckPowerHpDivisor ?? 0.5;
+  const minHp = combatConfig?.minimumPlayerHp ?? 20;
+
+  // Sum HP modifiers from cards
+  const hpMod = cards.reduce((sum, c) => sum + (c.hpModifier || 0), 0);
+
+  // Total deck power penalty
+  const totalPower = cards.reduce((sum, c) => sum + c.attack + c.defense, 0);
+  const powerPenalty = Math.floor(totalPower * divisor);
+
+  const finalHp = Math.max(minHp, baseHp + hpMod - powerPenalty);
+  return { hp: finalHp, maxHp: finalHp };
+}
+
+/**
+ * Build a battle deck from owned hero cards — Original Mythereum style.
+ * First card becomes the leader, rest go to hand.
  */
 export function buildBattleDeck(
   heroes: OwnedHeroCard[],
   ownerName: string,
-  getManaForCard?: (cardId: string) => number
+  combatConfig?: CombatConfig,
+  magickConfig?: MagickConfig,
 ): BattleDeck {
   const cards: BattleCard[] = heroes.map((hero, index) => {
     const cardData = CARD_LIBRARY.find(c => c.id === hero.cardId);
-    
-    // Use dynamic mana cost if available, otherwise use default
-    const manaCost = getManaForCard ? getManaForCard(hero.cardId) : (cardData?.manaRequirement?.mana || cardData?.cost || 3);
-    
-    // Populate attack/defense/hp logically from card data
-    // Priority: card data stats > derived from power > minimum defaults
-    const attack = cardData?.attack || Math.floor(hero.power / 2) || 1;
-    const defense = cardData?.defense || Math.floor(hero.power / 2) || 1;
-    const hp = defense; // HP equals defense for simplicity
-    
+
+    const attack = cardData?.attack || Math.floor(hero.power / 2) || 15;
+    const defense = cardData?.defense || Math.floor(hero.power / 2) || 15;
+
     return {
-      // CardData properties
       id: hero.cardId,
       name: hero.name,
       power: hero.power,
@@ -100,53 +219,66 @@ export function buildBattleDeck(
       rarity: hero.rarity,
       class: hero.class,
       tags: hero.tags,
-      // Battle-specific properties
       instanceId: `${hero.instanceId}-${index}`,
       attack,
       defense,
       currentDefense: defense,
-      hp,
-      cost: manaCost,
-      manaRequirement: cardData?.manaRequirement ? { ...cardData.manaRequirement, mana: manaCost } : { mana: manaCost },
+      hp: defense,
+      cost: cardData?.cost || 3,
+      manaRequirement: cardData?.manaRequirement ? { ...cardData.manaRequirement } : undefined,
+      magickGeneration: cardData?.magickGeneration ? { ...cardData.magickGeneration } : undefined,
+      ability: cardData?.ability ? {
+        ...cardData.ability,
+        cost: { ...cardData.ability.cost },
+        effect: { ...cardData.ability.effect } as any,
+      } : undefined,
+      hpModifier: cardData?.hpModifier || 0,
       isExhausted: false,
     };
   });
-  
-  // Recompute totalPower from attack + defense (not from hero.power)
-  // This ensures accuracy even if card stats are modified
+
   const totalPower = cards.reduce((sum, card) => sum + card.attack + card.defense, 0);
-  
+  const { hp, maxHp } = calculatePlayerHp(cards, combatConfig);
+
+  // First card = leader, rest = hand
+  const leader = cards.length > 0 ? deepCloneCard(cards[0]) : null;
+  const hand = cards.slice(1).map(deepCloneCard);
+
   return {
     cards,
     totalPower,
     ownerName,
+    leader,
+    hand,
+    graveyard: [],
+    playerHp: hp,
+    maxPlayerHp: maxHp,
+    magick: createMagickPool(
+      magickConfig?.startingWhite ?? 0,
+      magickConfig?.startingBlack ?? 0,
+      magickConfig?.startingGrey ?? 0,
+    ),
   };
 }
 
 /**
- * Build an AI opponent deck by selecting random cards from the library.
- * Matches the player's deck size and approximate power level for fair fights.
- *
- * PURE FUNCTION - No side effects, no mutations.
+ * Build an AI opponent deck from the card library.
  */
 export function buildAiDeck(
   playerDeckSize: number,
   playerTotalPower: number,
-  ownerName: string
+  ownerName: string,
+  combatConfig?: CombatConfig,
+  magickConfig?: MagickConfig,
 ): BattleDeck {
   const availableCards = CARD_LIBRARY.filter(c => c.cardType === 'Hero');
-  if (availableCards.length === 0) {
-    // Fallback: use ALL cards if no Hero-typed cards exist
-    const fallback = CARD_LIBRARY.length > 0 ? CARD_LIBRARY : [{ id: 'fallback', name: 'AI Recruit', power: 10, cardType: 'Hero', attack: 5, defense: 5, cost: 3 }];
-    availableCards.push(...(fallback as any[]));
-  }
   const cards: BattleCard[] = [];
 
   for (let i = 0; i < playerDeckSize; i++) {
     const cardData = availableCards[Math.floor(Math.random() * availableCards.length)];
 
-    const attack = cardData.attack || Math.floor(cardData.power / 2) || 1;
-    const defense = cardData.defense || Math.floor(cardData.power / 2) || 1;
+    const attack = cardData.attack || Math.floor(cardData.power / 2) || 15;
+    const defense = cardData.defense || Math.floor(cardData.power / 2) || 15;
 
     cards.push({
       id: cardData.id,
@@ -165,33 +297,46 @@ export function buildAiDeck(
       defense,
       currentDefense: defense,
       hp: defense,
-      cost: cardData.manaRequirement?.mana || cardData.cost || 3,
-      manaRequirement: cardData.manaRequirement ? { ...cardData.manaRequirement } : { mana: 3 },
+      cost: cardData.cost || 3,
+      manaRequirement: cardData.manaRequirement ? { ...cardData.manaRequirement } : undefined,
+      magickGeneration: cardData.magickGeneration ? { ...cardData.magickGeneration } : undefined,
+      ability: cardData.ability ? {
+        ...cardData.ability,
+        cost: { ...cardData.ability.cost },
+        effect: { ...cardData.ability.effect } as any,
+      } : undefined,
+      hpModifier: cardData.hpModifier || 0,
       isExhausted: false,
     });
   }
 
   const totalPower = cards.reduce((sum, card) => sum + card.attack + card.defense, 0);
+  const { hp, maxHp } = calculatePlayerHp(cards, combatConfig);
+
+  const leader = cards.length > 0 ? deepCloneCard(cards[0]) : null;
+  const hand = cards.slice(1).map(deepCloneCard);
 
   return {
     cards,
     totalPower,
     ownerName,
+    leader,
+    hand,
+    graveyard: [],
+    playerHp: hp,
+    maxPlayerHp: maxHp,
+    magick: createMagickPool(
+      magickConfig?.startingWhite ?? 0,
+      magickConfig?.startingBlack ?? 0,
+      magickConfig?.startingGrey ?? 0,
+    ),
   };
 }
 
-/**
- * Initialize a new battle with two decks.
- * 
- * PURE FUNCTION - No side effects, no mutations.
- * Returns initial battle state with deep copies.
- * 
- * Initial State:
- * - turn: 1
- * - phase: 'combat' (ready for first round)
- * - winner: null (battle not yet decided)
- * - log: Initial system messages
- */
+// ============================================================
+// BATTLE INITIALIZATION
+// ============================================================
+
 export function initializeBattle(deck1: BattleDeck, deck2: BattleDeck): Battle {
   return {
     deck1: deepCloneDeck(deck1),
@@ -202,378 +347,573 @@ export function initializeBattle(deck1: BattleDeck, deck2: BattleDeck): Battle {
     lastEvent: undefined,
     log: [
       { message: 'Battle begins!', category: 'system' },
-      { message: `${deck1.ownerName} vs ${deck2.ownerName}`, category: 'system' },
+      { message: `${deck1.ownerName} (${deck1.playerHp} HP) vs ${deck2.ownerName} (${deck2.playerHp} HP)`, category: 'system' },
+      { message: `${deck1.ownerName}'s leader: ${deck1.leader?.name || 'None'}`, category: 'system' },
+      { message: `${deck2.ownerName}'s leader: ${deck2.leader?.name || 'None'}`, category: 'system' },
     ],
   };
 }
 
+// ============================================================
+// PLAYER ACTIONS
+// ============================================================
+
 /**
- * Player targeting options for a single round.
- * When provided, the player chooses which of their cards attacks
- * and which enemy card is the target.  Omitted fields fall back to random.
+ * Player targeting / actions for a turn.
  */
 export interface PlayerTargeting {
-  /** instanceId of the player card that should attack */
+  /** Swap leader with a hand card (instanceId of hand card to swap in) */
+  swapLeaderInstanceId?: string | number;
+  /** Activate leader's ability this turn */
+  activateAbility?: boolean;
+  /** instanceId of the player card that should attack (legacy compat) */
   attackerInstanceId?: string | number;
-  /** instanceId of the enemy card to target */
+  /** instanceId of the enemy card to target (legacy compat) */
   targetInstanceId?: string | number;
 }
 
 /**
- * Resolve a single attack between two cards, applying class abilities.
- *
- * PURE HELPER — does NOT mutate the cards; returns the final damage dealt and
- * an array of ability log messages that fired during resolution.
+ * Swap leader with a hand card. Returns new deck state.
  */
-function resolveAttack(
-  attacker: BattleCard,
-  defender: BattleCard,
-  baseMitDiv: number,
-  baseMinDmg: number,
-  abilities?: ClassAbilitiesConfig,
-): { damage: number; abilityLogs: string[] } {
+function swapLeader(deck: BattleDeck, handCardInstanceId: string | number): string | null {
+  const handIdx = deck.hand.findIndex(c => c.instanceId === handCardInstanceId);
+  if (handIdx === -1) return null;
+
+  const oldLeader = deck.leader;
+  const newLeader = deck.hand[handIdx];
+
+  // Reset temporary boosts on old leader
+  if (oldLeader) {
+    oldLeader.tempAttackBoost = 0;
+    oldLeader.tempDefenseBoost = 0;
+    oldLeader.isHidden = false;
+    oldLeader.hasAnnihilate = false;
+    oldLeader.isStunned = false;
+    deck.hand.splice(handIdx, 1);
+    deck.hand.push(oldLeader);
+  } else {
+    deck.hand.splice(handIdx, 1);
+  }
+
+  deck.leader = newLeader;
+  // Reset temp boosts on new leader
+  newLeader.tempAttackBoost = 0;
+  newLeader.tempDefenseBoost = 0;
+  newLeader.isHidden = false;
+  newLeader.hasAnnihilate = false;
+  newLeader.isStunned = false;
+
+  return `${deck.ownerName} swaps leader to ${newLeader.name}`;
+}
+
+/**
+ * Apply an activated ability to the battle state.
+ * Returns log messages.
+ */
+function activateAbility(
+  deck: BattleDeck,
+  enemyDeck: BattleDeck,
+  ability: CardAbility,
+): string[] {
   const logs: string[] = [];
+  const leader = deck.leader;
+  if (!leader) return logs;
 
-  // 1) Base attack value
-  let atkValue = attacker.attack;
+  if (!spendMagick(deck.magick, ability.cost)) {
+    logs.push(`${deck.ownerName} cannot afford ${ability.name}!`);
+    return logs;
+  }
 
-  // Ranger — Precision Shot: flat bonus attack
-  if (attacker.class === 'Ranger' && abilities) {
-    const bonus = abilities.rangerPrecisionShotBonus;
-    if (bonus > 0) {
-      atkValue += bonus;
-      logs.push(`${attacker.name} fires a Precision Shot (+${bonus} dmg)`);
+  logs.push(`${leader.name} activates ${ability.name}!`);
+
+  const effect = ability.effect;
+  switch (effect.type) {
+    case 'attack_boost':
+      leader.tempAttackBoost = (leader.tempAttackBoost || 0) + effect.amount;
+      logs.push(`${leader.name} gains +${effect.amount} ATK this turn`);
+      break;
+
+    case 'defense_boost':
+      leader.tempDefenseBoost = (leader.tempDefenseBoost || 0) + effect.amount;
+      logs.push(`${leader.name} gains +${effect.amount} DEF this turn`);
+      break;
+
+    case 'hp_boost':
+      leader.currentDefense = Math.min(leader.defense + 50, leader.currentDefense + effect.amount);
+      logs.push(`${leader.name} heals ${effect.amount} HP`);
+      break;
+
+    case 'hide':
+      leader.isHidden = true;
+      logs.push(`${leader.name} hides — infinite defense this turn!`);
+      break;
+
+    case 'annihilate':
+      leader.hasAnnihilate = true;
+      logs.push(`${leader.name} charges ANNIHILATE — infinite attack this turn!`);
+      break;
+
+    case 'drain': {
+      const dmg = effect.amount;
+      enemyDeck.playerHp -= dmg;
+      logs.push(`${leader.name} drains ${dmg} HP from ${enemyDeck.ownerName}!`);
+      break;
+    }
+
+    case 'stun':
+      if (enemyDeck.leader) {
+        enemyDeck.leader.isStunned = true;
+        logs.push(`${enemyDeck.leader.name} is STUNNED — cannot attack next turn!`);
+      }
+      break;
+
+    case 'superior_wit':
+      leader.tempAttackBoost = (leader.tempAttackBoost || 0) + effect.attack;
+      leader.currentDefense = Math.min(leader.defense + 50, leader.currentDefense + effect.hp);
+      logs.push(`${leader.name} gains +${effect.attack} ATK and heals ${effect.hp} HP`);
+      break;
+
+    case 'shield':
+      leader.tempDefenseBoost = (leader.tempDefenseBoost || 0) + effect.amount;
+      logs.push(`${leader.name} shields for ${effect.amount} damage`);
+      break;
+
+    case 'piercing':
+      // Store as negative defense boost on enemy
+      if (enemyDeck.leader) {
+        enemyDeck.leader.tempDefenseBoost = (enemyDeck.leader.tempDefenseBoost || 0) - effect.amount;
+        logs.push(`${leader.name} pierces ${effect.amount} of ${enemyDeck.leader.name}'s defense!`);
+      }
+      break;
+
+    case 'rally':
+      for (const handCard of deck.hand) {
+        handCard.attack += effect.amount;
+      }
+      logs.push(`All hand cards gain +${effect.amount} ATK permanently!`);
+      break;
+
+    case 'lifesteal':
+      // Applied during combat resolution
+      leader.tempAttackBoost = (leader.tempAttackBoost || 0); // mark for lifesteal
+      logs.push(`${leader.name} will lifesteal ${effect.percent}% of damage dealt`);
+      break;
+
+    case 'magick_drain': {
+      const stolen = Math.min(effect.amount, (enemyDeck.magick as any)[effect.color] || 0);
+      (enemyDeck.magick as any)[effect.color] -= stolen;
+      (deck.magick as any)[effect.color] += stolen;
+      logs.push(`Stole ${stolen} ${effect.color} Magick from ${enemyDeck.ownerName}!`);
+      break;
     }
   }
 
-  // 2) Determine effective mitigation divisor
-  let effectiveMitDiv = baseMitDiv;
-
-  // Mage — Arcane Surge: increase divisor so defense mitigates less
-  if (attacker.class === 'Mage' && abilities) {
-    const bonus = abilities.mageArcaneSurgeBonusDivisor;
-    if (bonus > 0) {
-      effectiveMitDiv += bonus;
-      logs.push(`${attacker.name}'s Arcane Surge pierces armor`);
-    }
-  }
-
-  // 3) Base damage calc
-  let dmg = Math.max(0, atkValue - Math.floor(defender.defense / effectiveMitDiv));
-
-  // Rogue — Critical Strike: chance to multiply damage
-  if (attacker.class === 'Rogue' && abilities) {
-    const chance = abilities.rogueCriticalStrikeChance;
-    const mult = abilities.rogueCriticalStrikeMultiplier;
-    if (chance > 0 && Math.random() < chance) {
-      dmg = Math.floor(dmg * mult);
-      logs.push(`${attacker.name} lands a Critical Strike! (x${mult})`);
-    }
-  }
-
-  // 4) Warrior — Fortify: flat damage reduction on the defender
-  if (defender.class === 'Warrior' && abilities) {
-    const reduction = abilities.warriorFortifyReduction;
-    if (reduction > 0) {
-      dmg = Math.max(0, dmg - reduction);
-      logs.push(`${defender.name}'s Fortify absorbs ${reduction} dmg`);
-    }
-  }
-
-  // 5) Enforce minimum damage
-  dmg = Math.max(baseMinDmg, dmg);
-
-  return { damage: dmg, abilityLogs: logs };
+  return logs;
 }
 
-/**
- * Apply Healer — Rejuvenation to a deck: heal the most-damaged alive card.
- * Returns a log message if healing occurred, or null.
- */
-function applyHealerRejuvenation(
-  deckCards: BattleCard[],
-  amount: number,
-): string | null {
-  // Find alive healers
-  const healers = deckCards.filter(c => c.class === 'Healer' && c.currentDefense > 0);
-  if (healers.length === 0 || amount <= 0) return null;
-
-  // Find the most-damaged alive ally (biggest gap between defense and currentDefense)
-  const damagedAllies = deckCards.filter(c => c.currentDefense > 0 && c.currentDefense < c.defense);
-  if (damagedAllies.length === 0) return null;
-
-  damagedAllies.sort((a, b) => (a.currentDefense / a.defense) - (b.currentDefense / b.defense));
-  const target = damagedAllies[0];
-  const healer = healers[0]; // first healer does the healing
-
-  const healAmt = Math.min(amount, target.defense - target.currentDefense);
-  if (healAmt <= 0) return null;
-
-  target.currentDefense += healAmt;
-  return `${healer.name}'s Rejuvenation heals ${target.name} for ${healAmt} HP`;
-}
+// ============================================================
+// COMBAT RESOLUTION
+// ============================================================
 
 /**
- * Simulate one round of battle with class abilities.
+ * Simulate one round of Original Mythereum battle.
  *
- * PURE FUNCTION - No side effects, no mutations.
- * Deep copies input battle state before applying any logic.
- *
- * Combat Flow:
- *   Pre-combat — Healer Rejuvenation triggers for both sides
- *   Phase 1 — Deck 1 (player) attacks Deck 2 (AI)
- *     • If `targeting` is provided the chosen attacker/target are used
- *     • Otherwise a random attacker/target pair is selected
- *     • Class abilities modify damage (Ranger +dmg, Mage pierce, Rogue crit, Warrior absorb)
- *   Phase 2 — Deck 2 (AI) counterattacks Deck 1 (always random)
- *   Post-combat — Victory check
- *
- * Returns new battle state with combat results.
- * Never mutates input battle state.
+ * Turn flow:
+ * 1. Reset temporary boosts from last turn
+ * 2. Magick generation for both sides
+ * 3. Player swap phase (optional leader swap)
+ * 4. Ability activation phase (optional)
+ * 5. Combat — leaders attack each other simultaneously
+ * 6. Excess damage hits player HP
+ * 7. Dead leader replaced from hand (auto-pick)
+ * 8. Victory check
  */
 export function simulateBattleRound(
   battle: Battle,
   combatConfig?: CombatConfig,
   targeting?: PlayerTargeting,
   abilitiesConfig?: ClassAbilitiesConfig,
+  magickConfig?: MagickConfig,
 ): Battle {
-  // Deep copy to prevent mutation - CRITICAL for React state integrity
   const next = deepCloneBattle(battle);
-  next.roundEvents = []; // reset for this round
+  next.roundEvents = [];
 
-  // Check if battle is already complete
-  if (next.winner !== null || next.phase === 'complete') {
-    return next;
-  }
+  if (next.winner !== null || next.phase === 'complete') return next;
 
-  // Get live cards from both decks (currentDefense > 0)
-  const deck1Cards = next.deck1.cards.filter(c => c.currentDefense > 0);
-  const deck2Cards = next.deck2.cards.filter(c => c.currentDefense > 0);
-
-  // Check for victory conditions before combat
-  if (deck1Cards.length === 0) {
+  // Check both sides have leaders or can field one
+  if (!next.deck1.leader && next.deck1.hand.length === 0) {
     next.winner = 2;
     next.phase = 'complete';
-    next.log.push({ message: `${next.deck2.ownerName} wins! All opponent cards defeated.`, category: 'system' });
+    next.log.push({ message: `${next.deck2.ownerName} wins! ${next.deck1.ownerName} has no cards left!`, category: 'system' });
+    return next;
+  }
+  if (!next.deck2.leader && next.deck2.hand.length === 0) {
+    next.winner = 1;
+    next.phase = 'complete';
+    next.log.push({ message: `${next.deck1.ownerName} wins! ${next.deck2.ownerName} has no cards left!`, category: 'system' });
     return next;
   }
 
-  if (deck2Cards.length === 0) {
-    next.winner = 1;
-    next.phase = 'complete';
-    next.log.push({ message: `${next.deck1.ownerName} wins! All opponent cards defeated.`, category: 'system' });
+  // Auto-field leader if none
+  if (!next.deck1.leader && next.deck1.hand.length > 0) {
+    next.deck1.leader = next.deck1.hand.shift()!;
+    next.log.push({ message: `${next.deck1.ownerName} fields ${next.deck1.leader.name} as leader`, category: 'system' });
+  }
+  if (!next.deck2.leader && next.deck2.hand.length > 0) {
+    next.deck2.leader = next.deck2.hand.shift()!;
+    next.log.push({ message: `${next.deck2.ownerName} fields ${next.deck2.leader.name} as leader`, category: 'system' });
+  }
+
+  // === STEP 1: Reset temporary boosts ===
+  if (next.deck1.leader) {
+    next.deck1.leader.tempAttackBoost = 0;
+    next.deck1.leader.tempDefenseBoost = 0;
+    next.deck1.leader.isHidden = false;
+    next.deck1.leader.hasAnnihilate = false;
+    // Note: isStunned persists from previous turn's stun, cleared after combat
+  }
+  if (next.deck2.leader) {
+    next.deck2.leader.tempAttackBoost = 0;
+    next.deck2.leader.tempDefenseBoost = 0;
+    next.deck2.leader.isHidden = false;
+    next.deck2.leader.hasAnnihilate = false;
+  }
+
+  // === STEP 2: Magick generation ===
+  const magickLogs1 = generateMagick(next.deck1, magickConfig);
+  const magickLogs2 = generateMagick(next.deck2, magickConfig);
+  for (const log of [...magickLogs1, ...magickLogs2]) {
+    next.log.push({ message: log, category: 'magick' });
+  }
+
+  // === STEP 3: Player swap phase ===
+  if (targeting?.swapLeaderInstanceId != null) {
+    const swapLog = swapLeader(next.deck1, targeting.swapLeaderInstanceId);
+    if (swapLog) next.log.push({ message: swapLog, category: 'action' });
+  }
+
+  // === STEP 4: Ability activation ===
+  if (targeting?.activateAbility && next.deck1.leader?.ability) {
+    const abilityLogs = activateAbility(next.deck1, next.deck2, next.deck1.leader.ability);
+    for (const log of abilityLogs) {
+      next.log.push({ message: log, category: 'ability' });
+    }
+  }
+
+  // AI ability activation (simple heuristic: activate if can afford and ability is offensive)
+  if (next.deck2.leader?.ability) {
+    const aiAbility = next.deck2.leader.ability;
+    if (canAffordAbility(next.deck2.magick, aiAbility.cost)) {
+      // AI activates ability ~50% of the time when affordable
+      if (Math.random() < 0.5) {
+        const abilityLogs = activateAbility(next.deck2, next.deck1, aiAbility);
+        for (const log of abilityLogs) {
+          next.log.push({ message: log, category: 'ability' });
+        }
+      }
+    }
+  }
+
+  // === STEP 5: Combat — Leaders attack each other ===
+  const leader1 = next.deck1.leader;
+  const leader2 = next.deck2.leader;
+
+  if (!leader1 || !leader2) {
+    // Edge case: one side has no leader (shouldn't happen at this point)
+    next.turn += 1;
     return next;
   }
 
   const mitDiv = combatConfig?.damageMitigationDivisor ?? 2;
   const minDmg = combatConfig?.minimumDamage ?? 1;
 
-  // === PRE-COMBAT: Healer Rejuvenation for both sides ===
-  if (abilitiesConfig && abilitiesConfig.healerRejuvenationAmount > 0) {
-    const healLog1 = applyHealerRejuvenation(next.deck1.cards, abilitiesConfig.healerRejuvenationAmount);
-    if (healLog1) next.log.push({ message: healLog1, category: 'action' });
+  // Calculate Deck 1's attack on Deck 2's leader
+  let atk1 = leader1.attack + (leader1.tempAttackBoost || 0);
+  let def2 = Math.max(0, leader2.defense + (leader2.tempDefenseBoost || 0));
 
-    const healLog2 = applyHealerRejuvenation(next.deck2.cards, abilitiesConfig.healerRejuvenationAmount);
-    if (healLog2) next.log.push({ message: healLog2, category: 'action' });
+  // Annihilate = guaranteed kill
+  if (leader1.hasAnnihilate) {
+    atk1 = 9999;
+  }
+  // Hidden = can't be damaged
+  if (leader2.isHidden) {
+    def2 = 9999;
+  }
+  // Stunned = can't attack
+  const leader1Stunned = leader1.isStunned;
+
+  let dmg1 = leader1Stunned ? 0 : Math.max(minDmg, atk1 - Math.floor(def2 / mitDiv));
+  if (leader2.isHidden && !leader1.hasAnnihilate) dmg1 = 0; // Hidden blocks all damage
+
+  // Calculate Deck 2's attack on Deck 1's leader
+  let atk2 = leader2.attack + (leader2.tempAttackBoost || 0);
+  let def1 = Math.max(0, leader1.defense + (leader1.tempDefenseBoost || 0));
+
+  if (leader2.hasAnnihilate) {
+    atk2 = 9999;
+  }
+  if (leader1.isHidden) {
+    def1 = 9999;
+  }
+  const leader2Stunned = leader2.isStunned;
+
+  let dmg2 = leader2Stunned ? 0 : Math.max(minDmg, atk2 - Math.floor(def1 / mitDiv));
+  if (leader1.isHidden && !leader2.hasAnnihilate) dmg2 = 0;
+
+  // Apply damage to both leaders simultaneously
+  let leader1Destroyed = false;
+  let leader2Destroyed = false;
+  let excess1 = 0; // Excess damage hitting player 2 HP
+  let excess2 = 0; // Excess damage hitting player 1 HP
+
+  // Damage to leader 2
+  if (dmg1 > 0) {
+    leader2.currentDefense -= dmg1;
+    if (leader2.currentDefense <= 0) {
+      excess1 = Math.abs(leader2.currentDefense);
+      leader2Destroyed = true;
+      next.deck2.playerHp -= excess1;
+    }
   }
 
-  // Refresh live cards (healing may have changed nothing, but be safe)
-  const live1 = next.deck1.cards.filter(c => c.currentDefense > 0);
-  const live2 = next.deck2.cards.filter(c => c.currentDefense > 0);
-
-  // === PHASE 1: Deck 1 attacks Deck 2 ===
-  const attacker1 = (targeting?.attackerInstanceId != null
-    ? live1.find(c => c.instanceId === targeting.attackerInstanceId)
-    : undefined) ?? live1[Math.floor(Math.random() * live1.length)];
-
-  const defender1 = (targeting?.targetInstanceId != null
-    ? live2.find(c => c.instanceId === targeting.targetInstanceId)
-    : undefined) ?? live2[Math.floor(Math.random() * live2.length)];
-
-  const { damage: dmg1, abilityLogs: aLogs1 } = resolveAttack(attacker1, defender1, mitDiv, minDmg, abilitiesConfig);
-
-  // Log ability triggers
-  for (const aLog of aLogs1) {
-    next.log.push({ message: aLog, category: 'action' });
+  // Damage to leader 1
+  if (dmg2 > 0) {
+    leader1.currentDefense -= dmg2;
+    if (leader1.currentDefense <= 0) {
+      excess2 = Math.abs(leader1.currentDefense);
+      leader1Destroyed = true;
+      next.deck1.playerHp -= excess2;
+    }
   }
 
-  const defIdx1 = next.deck2.cards.findIndex(c => c.instanceId === defender1.instanceId);
-  let defender1Destroyed = false;
-  if (defIdx1 !== -1) {
-    next.deck2.cards[defIdx1] = deepCloneCard(next.deck2.cards[defIdx1]);
-    next.deck2.cards[defIdx1].currentDefense -= dmg1;
-    defender1Destroyed = next.deck2.cards[defIdx1].currentDefense <= 0;
+  // Lifesteal check
+  if (leader1.ability?.effect.type === 'lifesteal' && targeting?.activateAbility && dmg1 > 0) {
+    const healAmount = Math.floor(dmg1 * (leader1.ability.effect as any).percent / 100);
+    next.deck1.playerHp = Math.min(next.deck1.maxPlayerHp, next.deck1.playerHp + healAmount);
+    next.log.push({ message: `${leader1.name} lifesteals ${healAmount} HP!`, category: 'combat' });
+  }
 
-    const msg = defender1Destroyed
-      ? `${attacker1.name} attacks ${defender1.name} for ${dmg1} damage - ${defender1.name} is destroyed!`
-      : `${attacker1.name} attacks ${defender1.name} for ${dmg1} damage (${next.deck2.cards[defIdx1].currentDefense} HP remaining)`;
+  // Log combat
+  if (leader1Stunned) {
+    next.log.push({ message: `${leader1.name} is STUNNED and cannot attack!`, category: 'combat' });
+  }
+  if (leader2Stunned) {
+    next.log.push({ message: `${leader2.name} is STUNNED and cannot attack!`, category: 'combat' });
+  }
+
+  if (dmg1 > 0) {
+    const msg = leader2Destroyed
+      ? `${leader1.name} attacks ${leader2.name} for ${dmg1} — DESTROYED! (${excess1} excess dmg to ${next.deck2.ownerName})`
+      : `${leader1.name} attacks ${leader2.name} for ${dmg1} (${leader2.currentDefense}/${leader2.defense} HP)`;
     next.log.push({ message: msg, category: 'combat' });
   }
 
-  next.roundEvents.push({
-    attackerName: attacker1.name,
-    attackerInstanceId: attacker1.instanceId,
-    defenderName: defender1.name,
-    defenderInstanceId: defender1.instanceId,
-    damage: dmg1,
-    defenderDestroyed: defender1Destroyed,
-    side: 1,
-  });
+  if (dmg2 > 0) {
+    const msg = leader1Destroyed
+      ? `${leader2.name} attacks ${leader1.name} for ${dmg2} — DESTROYED! (${excess2} excess dmg to ${next.deck1.ownerName})`
+      : `${leader2.name} attacks ${leader1.name} for ${dmg2} (${leader1.currentDefense}/${leader1.defense} HP)`;
+    next.log.push({ message: msg, category: 'combat' });
+  }
 
-  // === PHASE 2: Deck 2 counterattacks Deck 1 (always random — AI) ===
-  const liveDeck2 = next.deck2.cards.filter(c => c.currentDefense > 0);
-  const liveDeck1 = next.deck1.cards.filter(c => c.currentDefense > 0);
-
-  if (liveDeck2.length > 0 && liveDeck1.length > 0) {
-    const attacker2 = liveDeck2[Math.floor(Math.random() * liveDeck2.length)];
-    const defender2 = liveDeck1[Math.floor(Math.random() * liveDeck1.length)];
-
-    const { damage: dmg2, abilityLogs: aLogs2 } = resolveAttack(attacker2, defender2, mitDiv, minDmg, abilitiesConfig);
-
-    for (const aLog of aLogs2) {
-      next.log.push({ message: aLog, category: 'action' });
-    }
-
-    const defIdx2 = next.deck1.cards.findIndex(c => c.instanceId === defender2.instanceId);
-    let defender2Destroyed = false;
-    if (defIdx2 !== -1) {
-      next.deck1.cards[defIdx2] = deepCloneCard(next.deck1.cards[defIdx2]);
-      next.deck1.cards[defIdx2].currentDefense -= dmg2;
-      defender2Destroyed = next.deck1.cards[defIdx2].currentDefense <= 0;
-
-      const msg = defender2Destroyed
-        ? `${attacker2.name} attacks ${defender2.name} for ${dmg2} damage - ${defender2.name} is destroyed!`
-        : `${attacker2.name} attacks ${defender2.name} for ${dmg2} damage (${next.deck1.cards[defIdx2].currentDefense} HP remaining)`;
-      next.log.push({ message: msg, category: 'combat' });
-    }
-
-    next.roundEvents.push({
-      attackerName: attacker2.name,
-      attackerInstanceId: attacker2.instanceId,
-      defenderName: defender2.name,
-      defenderInstanceId: defender2.instanceId,
+  // Combat events for UI
+  if (dmg1 > 0 || leader1Stunned) {
+    next.roundEvents!.push({
+      attackerName: leader1.name,
+      attackerInstanceId: leader1.instanceId,
+      defenderName: leader2.name,
+      defenderInstanceId: leader2.instanceId,
+      damage: dmg1,
+      defenderDestroyed: leader2Destroyed,
+      excessDamage: excess1,
+      side: 1,
+    });
+  }
+  if (dmg2 > 0 || leader2Stunned) {
+    next.roundEvents!.push({
+      attackerName: leader2.name,
+      attackerInstanceId: leader2.instanceId,
+      defenderName: leader1.name,
+      defenderInstanceId: leader1.instanceId,
       damage: dmg2,
-      defenderDestroyed: defender2Destroyed,
+      defenderDestroyed: leader1Destroyed,
+      excessDamage: excess2,
       side: 2,
     });
   }
 
-  // Record last event for backward-compat UI (show the most dramatic event)
-  const p1 = next.roundEvents[0];
-  const p2 = next.roundEvents[1];
-  next.lastEvent = (p1?.defenderDestroyed)
-    ? { attacker: p1.attackerName, defender: p1.defenderName, damage: p1.damage, defenderDestroyed: true }
-    : (p2?.defenderDestroyed)
-    ? { attacker: p2.attackerName, defender: p2.defenderName, damage: p2.damage, defenderDestroyed: true }
-    : p1
-    ? { attacker: p1.attackerName, defender: p1.defenderName, damage: p1.damage, defenderDestroyed: false }
+  // Last event for backward compat
+  const p1 = next.roundEvents![0];
+  next.lastEvent = p1
+    ? { attacker: p1.attackerName, defender: p1.defenderName, damage: p1.damage, defenderDestroyed: p1.defenderDestroyed, excessDamage: p1.excessDamage }
     : undefined;
 
-  // Increment turn counter
+  // === STEP 6: Clear stun after combat ===
+  if (leader1.isStunned) leader1.isStunned = false;
+  if (leader2.isStunned) leader2.isStunned = false;
+
+  // === STEP 7: Dead leader → graveyard, field new leader from hand ===
+  if (leader2Destroyed) {
+    next.deck2.graveyard.push(leader2);
+    if (next.deck2.hand.length > 0) {
+      next.deck2.leader = next.deck2.hand.shift()!;
+      next.deck2.leader.tempAttackBoost = 0;
+      next.deck2.leader.tempDefenseBoost = 0;
+      next.log.push({ message: `${next.deck2.ownerName} fields ${next.deck2.leader.name} as new leader`, category: 'system' });
+    } else {
+      next.deck2.leader = null;
+    }
+  }
+
+  if (leader1Destroyed) {
+    next.deck1.graveyard.push(leader1);
+    if (next.deck1.hand.length > 0) {
+      next.deck1.leader = next.deck1.hand.shift()!;
+      next.deck1.leader.tempAttackBoost = 0;
+      next.deck1.leader.tempDefenseBoost = 0;
+      next.log.push({ message: `${next.deck1.ownerName} fields ${next.deck1.leader.name} as new leader`, category: 'system' });
+    } else {
+      next.deck1.leader = null;
+    }
+  }
+
+  // Increment turn
   next.turn += 1;
 
-  // Check victory conditions after both attacks
-  const remainingDeck1 = next.deck1.cards.filter(c => c.currentDefense > 0);
-  const remainingDeck2 = next.deck2.cards.filter(c => c.currentDefense > 0);
-
-  if (remainingDeck2.length === 0) {
+  // === STEP 8: Victory check ===
+  // Win condition: opponent player HP <= 0 OR opponent has no leader and no hand
+  if (next.deck2.playerHp <= 0) {
     next.winner = 1;
     next.phase = 'complete';
-    next.log.push({ message: `${next.deck1.ownerName} wins! All opponent cards defeated.`, category: 'system' });
-  } else if (remainingDeck1.length === 0) {
+    next.log.push({ message: `${next.deck1.ownerName} wins! ${next.deck2.ownerName}'s HP reduced to 0!`, category: 'system' });
+  } else if (next.deck1.playerHp <= 0) {
     next.winner = 2;
     next.phase = 'complete';
-    next.log.push({ message: `${next.deck2.ownerName} wins! All opponent cards defeated.`, category: 'system' });
+    next.log.push({ message: `${next.deck2.ownerName} wins! ${next.deck1.ownerName}'s HP reduced to 0!`, category: 'system' });
+  } else if (!next.deck2.leader && next.deck2.hand.length === 0) {
+    next.winner = 1;
+    next.phase = 'complete';
+    next.log.push({ message: `${next.deck1.ownerName} wins! ${next.deck2.ownerName} has no cards left!`, category: 'system' });
+  } else if (!next.deck1.leader && next.deck1.hand.length === 0) {
+    next.winner = 2;
+    next.phase = 'complete';
+    next.log.push({ message: `${next.deck2.ownerName} wins! ${next.deck1.ownerName} has no cards left!`, category: 'system' });
+  }
+
+  // Check max rounds
+  const maxRounds = combatConfig?.maxRounds ?? 30;
+  if (next.winner === null && next.turn > maxRounds) {
+    // Tiebreaker: most player HP wins
+    next.winner = next.deck1.playerHp >= next.deck2.playerHp ? 1 : 2;
+    next.phase = 'complete';
+    next.log.push({
+      message: `Max rounds reached! ${next.winner === 1 ? next.deck1.ownerName : next.deck2.ownerName} wins by HP (${next.deck1.playerHp} vs ${next.deck2.playerHp})`,
+      category: 'system',
+    });
   }
 
   return next;
 }
 
-/**
- * Helper: Clamp value between min and max
- * PURE FUNCTION - No side effects
- */
+// ============================================================
+// UTILITY
+// ============================================================
+
 export function clamp(min: number, max: number, value: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
 // ============================================================
-// AUTOBOT STRATEGY SYSTEM — for tournament automated combat
+// AUTOBOT STRATEGY SYSTEM — for tournaments
 // ============================================================
 
 /**
- * Resolve autobot strategy into concrete attacker + target selections.
- * Returns a PlayerTargeting object for the given strategy.
- *
- * PURE FUNCTION — no mutations, no side effects.
+ * AI strategy resolver for tournament automated combat.
+ * In leader system, strategy determines swap + ability decisions.
  */
 export function resolveAutobotTargeting(
   strategy: AutobotStrategy,
-  friendlyCards: BattleCard[],
-  enemyCards: BattleCard[],
+  deck: BattleDeck,
+  enemyDeck: BattleDeck,
 ): PlayerTargeting {
-  const aliveFriendly = friendlyCards.filter(c => c.currentDefense > 0);
-  const aliveEnemy = enemyCards.filter(c => c.currentDefense > 0);
+  const targeting: PlayerTargeting = {};
 
-  if (aliveFriendly.length === 0 || aliveEnemy.length === 0) return {};
+  if (!deck.leader || deck.hand.length === 0) return targeting;
 
   switch (strategy) {
     case 'focus-weakest': {
-      // Random attacker, target enemy with lowest current HP
-      const attacker = aliveFriendly[Math.floor(Math.random() * aliveFriendly.length)];
-      const target = [...aliveEnemy].sort((a, b) => a.currentDefense - b.currentDefense)[0];
-      return { attackerInstanceId: attacker.instanceId, targetInstanceId: target.instanceId };
+      // Aggressive: activate ability if affordable, don't swap
+      if (deck.leader.ability && canAffordAbility(deck.magick, deck.leader.ability.cost)) {
+        targeting.activateAbility = true;
+      }
+      break;
     }
 
     case 'focus-strongest': {
-      // Random attacker, target enemy with highest attack
-      const attacker = aliveFriendly[Math.floor(Math.random() * aliveFriendly.length)];
-      const target = [...aliveEnemy].sort((a, b) => b.attack - a.attack)[0];
-      return { attackerInstanceId: attacker.instanceId, targetInstanceId: target.instanceId };
+      // Counter: swap to highest-attack card, activate ability
+      const strongestHand = [...deck.hand].sort((a, b) => b.attack - a.attack)[0];
+      if (strongestHand && strongestHand.attack > deck.leader.attack + 10) {
+        targeting.swapLeaderInstanceId = strongestHand.instanceId;
+      }
+      if (deck.leader.ability && canAffordAbility(deck.magick, deck.leader.ability.cost)) {
+        targeting.activateAbility = true;
+      }
+      break;
     }
 
     case 'spread-damage': {
-      // Random attacker, target enemy with highest current HP (distribute damage)
-      const attacker = aliveFriendly[Math.floor(Math.random() * aliveFriendly.length)];
-      const target = [...aliveEnemy].sort((a, b) => b.currentDefense - a.currentDefense)[0];
-      return { attackerInstanceId: attacker.instanceId, targetInstanceId: target.instanceId };
+      // Rotate leaders to spread incoming damage
+      if (deck.leader.currentDefense < deck.leader.defense * 0.5 && deck.hand.length > 0) {
+        // Swap to healthiest hand card
+        const healthiest = [...deck.hand].sort((a, b) => b.currentDefense - a.currentDefense)[0];
+        targeting.swapLeaderInstanceId = healthiest.instanceId;
+      }
+      break;
     }
 
     case 'protect-healer': {
-      // Use highest-attack friendly card, target highest-attack enemy
-      const attacker = [...aliveFriendly].sort((a, b) => b.attack - a.attack)[0];
-      const target = [...aliveEnemy].sort((a, b) => b.attack - a.attack)[0];
-      return { attackerInstanceId: attacker.instanceId, targetInstanceId: target.instanceId };
+      // Keep highest-defense card as leader, use abilities defensively
+      const tankiest = [...deck.hand].sort((a, b) => b.defense - a.defense)[0];
+      if (tankiest && tankiest.defense > deck.leader.defense + 5) {
+        targeting.swapLeaderInstanceId = tankiest.instanceId;
+      }
+      if (deck.leader.ability && canAffordAbility(deck.magick, deck.leader.ability.cost)) {
+        const eff = deck.leader.ability.effect;
+        if (eff.type === 'shield' || eff.type === 'hp_boost' || eff.type === 'hide') {
+          targeting.activateAbility = true;
+        }
+      }
+      break;
     }
 
     case 'random':
-    default:
-      return {}; // No targeting = fully random
+    default: {
+      // Random swap 20% of the time
+      if (Math.random() < 0.2 && deck.hand.length > 0) {
+        const randomHand = deck.hand[Math.floor(Math.random() * deck.hand.length)];
+        targeting.swapLeaderInstanceId = randomHand.instanceId;
+      }
+      // Random ability 40% of the time
+      if (deck.leader.ability && canAffordAbility(deck.magick, deck.leader.ability.cost) && Math.random() < 0.4) {
+        targeting.activateAbility = true;
+      }
+      break;
+    }
   }
+
+  return targeting;
 }
 
-/**
- * Result of a full automated tournament match.
- */
+// ============================================================
+// TOURNAMENT MATCH SIMULATION
+// ============================================================
+
 export interface TournamentMatchResult {
-  /** 1 = deck1 won, 2 = deck2 won */
   winner: 1 | 2;
-  /** Number of combat rounds the match took */
   roundCount: number;
-  /** Key events from the battle for the combat summary */
   combatSummary: string[];
-  /** Cards surviving on the winning side */
   survivingCards: number;
 }
 
-/**
- * Simulate a complete automated tournament match between two decks.
- * Both sides use autobot strategies for targeting. Runs up to `maxRounds`
- * rounds of combat. If no winner after maxRounds, the side with more
- * surviving HP wins.
- *
- * PURE FUNCTION — no side effects, no mutations.
- */
 export function simulateTournamentMatch(
   deck1: BattleDeck,
   deck2: BattleDeck,
@@ -589,16 +929,9 @@ export function simulateTournamentMatch(
   for (let round = 0; round < maxRounds; round++) {
     if (battle.winner !== null) break;
 
-    // Deck 1 uses their strategy for Phase 1 targeting
-    const targeting1 = resolveAutobotTargeting(
-      strategy1,
-      battle.deck1.cards,
-      battle.deck2.cards,
-    );
+    // Both sides use autobot strategy
+    const targeting1 = resolveAutobotTargeting(strategy1, battle.deck1, battle.deck2);
 
-    // Run the round — Phase 1 uses deck1's targeting, Phase 2 is always random for deck2
-    // To support deck2's strategy, we need a two-phase approach:
-    // First run with deck1's targeting (Phase 1 + random Phase 2)
     battle = simulateBattleRound(battle, combatConfig, targeting1, abilitiesConfig);
 
     // Collect notable events
@@ -607,22 +940,23 @@ export function simulateTournamentMatch(
         if (event.defenderDestroyed) {
           summary.push(`Turn ${battle.turn - 1}: ${event.attackerName} destroyed ${event.defenderName}`);
         }
+        if (event.excessDamage && event.excessDamage > 0) {
+          summary.push(`Turn ${battle.turn - 1}: ${event.excessDamage} excess damage to player`);
+        }
       }
     }
   }
 
-  // If no winner after max rounds, decide by remaining HP
   if (battle.winner === null) {
-    const hp1 = battle.deck1.cards.reduce((sum, c) => sum + Math.max(0, c.currentDefense), 0);
-    const hp2 = battle.deck2.cards.reduce((sum, c) => sum + Math.max(0, c.currentDefense), 0);
+    const hp1 = battle.deck1.playerHp;
+    const hp2 = battle.deck2.playerHp;
     battle.winner = hp1 >= hp2 ? 1 : 2;
-    summary.push(`Match decided by remaining HP: ${battle.deck1.ownerName} (${hp1}) vs ${battle.deck2.ownerName} (${hp2})`);
+    summary.push(`Match decided by HP: ${battle.deck1.ownerName} (${hp1}) vs ${battle.deck2.ownerName} (${hp2})`);
   }
 
   const winnerDeck = battle.winner === 1 ? battle.deck1 : battle.deck2;
-  const survivingCards = winnerDeck.cards.filter(c => c.currentDefense > 0).length;
+  const survivingCards = (winnerDeck.leader ? 1 : 0) + winnerDeck.hand.length;
 
-  // Keep summary to last 8 events + the decisive ones
   const trimmedSummary = summary.length > 10
     ? [...summary.slice(0, 3), `... ${summary.length - 6} more events ...`, ...summary.slice(-3)]
     : summary;
