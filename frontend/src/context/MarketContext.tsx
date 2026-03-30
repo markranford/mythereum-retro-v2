@@ -4,6 +4,7 @@ import { useHeroes } from './HeroesContext';
 import { useEconomy } from './EconomyContext';
 import { CARD_LIBRARY } from '../lib/mockData';
 import { useGameConfig } from './GameConfigContext';
+import { loadFromStorage, debouncedSave } from '../lib/storageUtils';
 
 interface MarketContextType {
   listings: HeroListing[];
@@ -45,24 +46,15 @@ export function MarketProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => { heroesRef.current = heroes; }, [heroes]);
   const stateRef = useRef<MarketState>(null as any);
 
-  const [state, setState] = useState<MarketState>(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      return JSON.parse(stored);
-    }
-    return {
-      listings: [],
-      nextListingId: 1,
-    };
-  });
+  const [state, setState] = useState<MarketState>(() =>
+    loadFromStorage<MarketState>(STORAGE_KEY, { listings: [], nextListingId: 1 })
+  );
 
   // Keep stateRef in sync
   useEffect(() => { stateRef.current = state; }, [state]);
 
   // Save to localStorage whenever state changes
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [state]);
+  useEffect(() => debouncedSave(STORAGE_KEY, state), [state]);
 
   // Buy from NPC
   const buyFromNpc = useCallback((offerId: string): boolean => {

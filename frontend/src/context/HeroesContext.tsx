@@ -3,6 +3,7 @@ import { OwnedHeroCard, Deck, DeckWithPower, DeckRole, HeroSource } from '../typ
 import { CARD_LIBRARY } from '../lib/mockData';
 import { useAccount } from './AccountContext';
 import { useGameConfig } from './GameConfigContext';
+import { loadFromStorage, debouncedSave, saveToStorage, removeFromStorage } from '../lib/storageUtils';
 
 interface HeroesContextType {
   heroes: OwnedHeroCard[];
@@ -84,60 +85,26 @@ export function HeroesProvider({ children }: { children: React.ReactNode }) {
   const heroCfgRef = useRef(heroCfg);
   const accountId = account?.accountId || 'guest';
 
-  const [heroes, setHeroes] = useState<OwnedHeroCard[]>(() => {
-    const stored = localStorage.getItem(`${STORAGE_KEY_PREFIX}${accountId}`);
-    if (stored) {
-      try {
-        return JSON.parse(stored);
-      } catch {
-        return generateStarterHeroes();
-      }
-    }
-    return generateStarterHeroes();
-  });
+  const [heroes, setHeroes] = useState<OwnedHeroCard[]>(() =>
+    loadFromStorage<OwnedHeroCard[]>(`${STORAGE_KEY_PREFIX}${accountId}`, generateStarterHeroes())
+  );
 
-  const [decks, setDecks] = useState<Deck[]>(() => {
-    const stored = localStorage.getItem(`${DECKS_KEY_PREFIX}${accountId}`);
-    if (stored) {
-      try {
-        return JSON.parse(stored);
-      } catch {
-        return [];
-      }
-    }
-    return [];
-  });
+  const [decks, setDecks] = useState<Deck[]>(() =>
+    loadFromStorage<Deck[]>(`${DECKS_KEY_PREFIX}${accountId}`, [])
+  );
 
-  const [activeDeckId, setActiveDeckId] = useState<string | null>(() => {
-    const stored = localStorage.getItem(`${ACTIVE_DECK_KEY_PREFIX}${accountId}`);
-    return stored || null;
-  });
+  const [activeDeckId, setActiveDeckId] = useState<string | null>(() =>
+    loadFromStorage<string | null>(`${ACTIVE_DECK_KEY_PREFIX}${accountId}`, null)
+  );
 
   useEffect(() => { heroCfgRef.current = heroCfg; }, [heroCfg]);
 
-  // PRIORITY 2: Debounced localStorage writes to prevent excessive updates
+  // Debounced localStorage writes
+  useEffect(() => debouncedSave(`${STORAGE_KEY_PREFIX}${accountId}`, heroes), [heroes, accountId]);
+  useEffect(() => debouncedSave(`${DECKS_KEY_PREFIX}${accountId}`, decks), [decks, accountId]);
   useEffect(() => {
-    const timer = setTimeout(() => {
-      localStorage.setItem(`${STORAGE_KEY_PREFIX}${accountId}`, JSON.stringify(heroes));
-    }, 300);
-    
-    return () => clearTimeout(timer);
-  }, [heroes, accountId]);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      localStorage.setItem(`${DECKS_KEY_PREFIX}${accountId}`, JSON.stringify(decks));
-    }, 300);
-    
-    return () => clearTimeout(timer);
-  }, [decks, accountId]);
-
-  useEffect(() => {
-    if (activeDeckId) {
-      localStorage.setItem(`${ACTIVE_DECK_KEY_PREFIX}${accountId}`, activeDeckId);
-    } else {
-      localStorage.removeItem(`${ACTIVE_DECK_KEY_PREFIX}${accountId}`);
-    }
+    if (activeDeckId) { saveToStorage(`${ACTIVE_DECK_KEY_PREFIX}${accountId}`, activeDeckId); }
+    else { removeFromStorage(`${ACTIVE_DECK_KEY_PREFIX}${accountId}`); }
   }, [activeDeckId, accountId]);
 
   // PRIORITY 2: Memoized computed decksWithPower to prevent re-computation

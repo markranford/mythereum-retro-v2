@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { DynamicCardBalance, BalanceRecommendation } from '../types/balancer';
 import { useTelemetry } from './TelemetryContext';
 import { computeBalanceRecommendations, getCurrentManaForCard } from '../lib/balancerEngine';
+import { loadFromStorage, debouncedSave } from '../lib/storageUtils';
 
 interface BalancerContextType {
   balances: DynamicCardBalance[];
@@ -31,17 +32,9 @@ const BALANCER_IMMUTABLE = false; // Set to true to prevent balance changes
 export function BalancerProvider({ children }: { children: React.ReactNode }) {
   const { summary, engineParams } = useTelemetry();
 
-  const [balances, setBalances] = useState<DynamicCardBalance[]>(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      try {
-        return JSON.parse(stored);
-      } catch {
-        return [];
-      }
-    }
-    return [];
-  });
+  const [balances, setBalances] = useState<DynamicCardBalance[]>(() =>
+    loadFromStorage<DynamicCardBalance[]>(STORAGE_KEY, [])
+  );
 
   const [recommendations, setRecommendations] = useState<BalanceRecommendation[]>([]);
   
@@ -58,9 +51,7 @@ export function BalancerProvider({ children }: { children: React.ReactNode }) {
   }
 
   // Save to localStorage whenever balances change
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(balances));
-  }, [balances]);
+  useEffect(() => debouncedSave(STORAGE_KEY, balances), [balances]);
 
   // PRIORITY 2: All methods memoized with useCallback for stable references
   const getManaForCard = useCallback((cardId: string): number => {

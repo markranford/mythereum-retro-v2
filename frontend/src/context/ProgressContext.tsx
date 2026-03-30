@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { PlayerProgress, GameLayer, DEFAULT_UNLOCK_THRESHOLDS } from '../types/progression';
 import { useAccount } from './AccountContext';
 import { useGameConfig } from './GameConfigContext';
+import { loadFromStorage, saveToStorage, debouncedSave } from '../lib/storageUtils';
 
 interface ProgressContextType {
   progress: PlayerProgress | null;
@@ -93,10 +94,9 @@ export function ProgressProvider({ children }: { children: React.ReactNode }) {
         console.debug('[ProgressContext] Initializing for account:', account.accountId);
       }
 
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
+      const allProgress = loadFromStorage<Record<string, PlayerProgress>>(STORAGE_KEY, {});
+      if (Object.keys(allProgress).length > 0) {
         try {
-          const allProgress: Record<string, PlayerProgress> = JSON.parse(stored);
           const accountProgress = allProgress[account.accountId];
 
           if (accountProgress) {
@@ -116,7 +116,7 @@ export function ProgressProvider({ children }: { children: React.ReactNode }) {
             
             // Save immediately
             allProgress[account.accountId] = newProgress;
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(allProgress));
+            saveToStorage(STORAGE_KEY, allProgress);
           }
         } catch (parseError) {
           console.error('[ProgressContext] Failed to parse stored progress:', parseError);
@@ -125,7 +125,7 @@ export function ProgressProvider({ children }: { children: React.ReactNode }) {
           // Create fresh progress
           const newProgress = createInitialProgress(account.accountId);
           setProgress(newProgress);
-          localStorage.setItem(STORAGE_KEY, JSON.stringify({ [account.accountId]: newProgress }));
+          saveToStorage(STORAGE_KEY, { [account.accountId]: newProgress });
         }
       } else {
         if (import.meta.env.DEV) {
@@ -145,28 +145,14 @@ export function ProgressProvider({ children }: { children: React.ReactNode }) {
     }
   }, [account?.accountId]); // PRIORITY 2: Only depend on accountId
 
-  // PRIORITY 2: Debounced localStorage writes (300ms) to prevent excessive updates
+  // Debounced localStorage writes
   useEffect(() => {
     if (!progress || !account || isUpdatingRef.current) return;
 
     const timer = setTimeout(() => {
-      try {
-        const stored = localStorage.getItem(STORAGE_KEY);
-        const allProgress: Record<string, PlayerProgress> = stored ? JSON.parse(stored) : {};
-        
-        allProgress[account.accountId] = {
-          ...progress,
-          lastUpdated: Date.now(),
-        };
-        
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(allProgress));
-        
-        if (import.meta.env.DEV) {
-          console.debug('[ProgressContext] Progress saved to localStorage');
-        }
-      } catch (error) {
-        console.error('[ProgressContext] Failed to save progress:', error);
-      }
+      const allProgress = loadFromStorage<Record<string, PlayerProgress>>(STORAGE_KEY, {});
+      allProgress[account.accountId] = { ...progress, lastUpdated: Date.now() };
+      saveToStorage(STORAGE_KEY, allProgress);
     }, 300); // 300ms debounce
     
     return () => clearTimeout(timer);

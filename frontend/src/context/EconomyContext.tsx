@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { SoftWallet, ResourceAmount, EconomyTransaction } from '../types/economy';
 import { useAccount } from './AccountContext';
 import { useGameConfig } from './GameConfigContext';
+import { loadFromStorage, debouncedSave } from '../lib/storageUtils';
 
 interface EconomyContextType {
   wallet: SoftWallet | null;

@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { TelemetrySummary, BalanceEngineParams, CardTelemetryCounters } from '../types/balancer';
 import { useHeroes } from './HeroesContext';
+import { loadFromStorage, debouncedSave } from '../lib/storageUtils';
 
 interface TelemetryContextType {
   summary: TelemetrySummary;
@@ -52,29 +53,13 @@ export function TelemetryProvider({ children }: { children: React.ReactNode }) {
   }
   
   const [summary, setSummary] = useState<TelemetrySummary>(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored);
-        return parsed.summary || DEFAULT_SUMMARY;
-      } catch {
-        return DEFAULT_SUMMARY;
-      }
-    }
-    return DEFAULT_SUMMARY;
+    const stored = loadFromStorage<{ summary?: TelemetrySummary }>(STORAGE_KEY, {});
+    return stored.summary || DEFAULT_SUMMARY;
   });
 
   const [engineParams, setEngineParams] = useState<BalanceEngineParams>(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored);
-        return parsed.engineParams || DEFAULT_ENGINE_PARAMS;
-      } catch {
-        return DEFAULT_ENGINE_PARAMS;
-      }
-    }
-    return DEFAULT_ENGINE_PARAMS;
+    const stored = loadFromStorage<{ engineParams?: BalanceEngineParams }>(STORAGE_KEY, {});
+    return stored.engineParams || DEFAULT_ENGINE_PARAMS;
   });
 
   // Helper to get cardId from ownedHeroId - use ref for stable callback
@@ -86,19 +71,10 @@ export function TelemetryProvider({ children }: { children: React.ReactNode }) {
     return hero?.cardId || null;
   }, []);
 
-  // PRIORITY 2: Debounced localStorage writes (300ms) to prevent excessive writes
+  // Debounced localStorage writes
   useEffect(() => {
     if (isUpdatingRef.current) return;
-    
-    const timer = setTimeout(() => {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ summary, engineParams }));
-      
-      if (import.meta.env.DEV) {
-        console.debug('[TelemetryContext] Data saved to localStorage');
-      }
-    }, 300); // 300ms debounce
-    
-    return () => clearTimeout(timer);
+    return debouncedSave(STORAGE_KEY, { summary, engineParams });
   }, [summary, engineParams]);
 
   // PRIORITY 2: All methods memoized with useCallback for stable references

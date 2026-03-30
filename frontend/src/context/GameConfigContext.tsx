@@ -3,6 +3,7 @@ import { GameConfig, CardOverride } from '../types/gameConfig';
 import { DEFAULT_GAME_CONFIG } from '../config/gameConfigDefaults';
 import { CARD_LIBRARY } from '../lib/mockData';
 import { CardData } from '../types/game';
+import { loadFromStorage, debouncedSave } from '../lib/storageUtils';
 
 // --- Types ---
 
@@ -64,47 +65,23 @@ function deepMergeConfig(defaults: GameConfig, stored: Partial<GameConfig>): Gam
 
 export function GameConfigProvider({ children }: { children: React.ReactNode }) {
   const [config, setConfig] = useState<GameConfig>(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        return deepMergeConfig(DEFAULT_GAME_CONFIG, parsed);
-      }
-    } catch (e) {
-      console.error('[GameConfig] Failed to load stored config:', e);
-    }
-    return { ...DEFAULT_GAME_CONFIG };
+    const stored = loadFromStorage<Partial<GameConfig>>(STORAGE_KEY, {});
+    return Object.keys(stored).length > 0 ? deepMergeConfig(DEFAULT_GAME_CONFIG, stored) : { ...DEFAULT_GAME_CONFIG };
   });
 
   // --- Profile state ---
   const [activeProfileName, setActiveProfileName] = useState<string>(() => {
-    return localStorage.getItem(ACTIVE_PROFILE_KEY) || 'Default';
+    return loadFromStorage<string>(ACTIVE_PROFILE_KEY, 'Default');
   });
 
   const [profiles, setProfiles] = useState<Record<string, GameConfig>>(() => {
-    try {
-      const stored = localStorage.getItem(PROFILES_KEY);
-      if (stored) return JSON.parse(stored);
-    } catch {}
-    return {};
+    return loadFromStorage<Record<string, GameConfig>>(PROFILES_KEY, {});
   });
 
-  // Debounced localStorage write (300ms)
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
-      localStorage.setItem(ACTIVE_PROFILE_KEY, activeProfileName);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [config, activeProfileName]);
-
-  // Save profiles when they change
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      localStorage.setItem(PROFILES_KEY, JSON.stringify(profiles));
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [profiles]);
+  // Debounced localStorage writes
+  useEffect(() => debouncedSave(STORAGE_KEY, config), [config]);
+  useEffect(() => debouncedSave(ACTIVE_PROFILE_KEY, activeProfileName), [activeProfileName]);
+  useEffect(() => debouncedSave(PROFILES_KEY, profiles), [profiles]);
 
   // --- Read helpers ---
 

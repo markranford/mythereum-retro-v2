@@ -5,6 +5,7 @@ import { getZoneFromIndex } from '../lib/hexMath';
 import { useEconomy } from './EconomyContext';
 import { useGameConfig } from './GameConfigContext';
 import { StrongholdProductionConfig } from '../types/gameConfig';
+import { loadFromStorage, saveToStorage, removeFromStorage } from '../lib/storageUtils';
 
 interface StrongholdContextType {
   stronghold: Stronghold | null;
@@ -60,24 +61,14 @@ export function StrongholdProvider({ children }: { children: React.ReactNode }) 
   const raidsCfgRef = useRef(raidsCfg);
   
   const [stronghold, setStronghold] = useState<ExtendedStronghold | null>(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      // Migrate old strongholds without mana
-      if (parsed.resources && parsed.resources.mana === undefined) {
-        parsed.resources.mana = 50;
-      }
-      // Initialize softMythex if missing (but don't add 1000 here - only on new account creation)
-      if (parsed.softMythex === undefined) {
-        parsed.softMythex = 0;
-      }
-      // Initialize lastProductionCollection if missing
-      if (parsed.lastProductionCollection === undefined) {
-        parsed.lastProductionCollection = Date.now();
-      }
-      return parsed;
+    const parsed = loadFromStorage<ExtendedStronghold | null>(STORAGE_KEY, null);
+    if (parsed) {
+      // Migrate old strongholds
+      if (parsed.resources && parsed.resources.mana === undefined) parsed.resources.mana = 50;
+      if (parsed.softMythex === undefined) parsed.softMythex = 0;
+      if (parsed.lastProductionCollection === undefined) parsed.lastProductionCollection = Date.now();
     }
-    return null;
+    return parsed;
   });
 
   const strongholdRef = useRef(stronghold);
@@ -87,11 +78,8 @@ export function StrongholdProvider({ children }: { children: React.ReactNode }) 
 
   // Save to localStorage whenever stronghold changes
   useEffect(() => {
-    if (stronghold) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(stronghold));
-    } else {
-      localStorage.removeItem(STORAGE_KEY);
-    }
+    if (stronghold) { saveToStorage(STORAGE_KEY, stronghold); }
+    else { removeFromStorage(STORAGE_KEY); }
   }, [stronghold]);
 
   // Get config-aware production rate for a building
