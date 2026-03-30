@@ -3,6 +3,7 @@ import { HeroListing, NpcHeroOffer, ListingStatus } from '../types/economy';
 import { useHeroes } from './HeroesContext';
 import { useEconomy } from './EconomyContext';
 import { CARD_LIBRARY } from '../lib/mockData';
+import { useGameConfig } from './GameConfigContext';
 
 interface MarketContextType {
   listings: HeroListing[];
@@ -36,6 +37,9 @@ interface MarketState {
 export function MarketProvider({ children }: { children: React.ReactNode }) {
   const { heroes, addHero, removeCard } = useHeroes();
   const { spendMythex, earnMythex, canAffordMythex } = useEconomy();
+  const { market: marketCfg } = useGameConfig();
+  const marketCfgRef = useRef(marketCfg);
+  useEffect(() => { marketCfgRef.current = marketCfg; }, [marketCfg]);
 
   const heroesRef = useRef(heroes);
   useEffect(() => { heroesRef.current = heroes; }, [heroes]);
@@ -62,7 +66,7 @@ export function MarketProvider({ children }: { children: React.ReactNode }) {
 
   // Buy from NPC
   const buyFromNpc = useCallback((offerId: string): boolean => {
-    const offer = NPC_OFFERS.find(o => o.id === offerId);
+    const offer = marketCfgRef.current.npcOffers.find(o => o.id === offerId);
     if (!offer) {
       console.error('[MarketContext] Offer not found:', offerId);
       return false;
@@ -180,12 +184,12 @@ export function MarketProvider({ children }: { children: React.ReactNode }) {
 
   const contextValue = useMemo(() => ({
     listings: state.listings,
-    npcOffers: NPC_OFFERS,
+    npcOffers: marketCfg.npcOffers,
     buyFromNpc,
     listHeroForSale,
     buyListing,
     cancelListing,
-  }), [state.listings, buyFromNpc, listHeroForSale, buyListing, cancelListing]);
+  }), [state.listings, marketCfg.npcOffers, buyFromNpc, listHeroForSale, buyListing, cancelListing]);
 
   return (
     <MarketContext.Provider value={contextValue}>

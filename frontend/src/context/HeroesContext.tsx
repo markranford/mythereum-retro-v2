@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { OwnedHeroCard, Deck, DeckWithPower, DeckRole, HeroSource } from '../types/heroes';
 import { CARD_LIBRARY } from '../lib/mockData';
 import { useAccount } from './AccountContext';
+import { useGameConfig } from './GameConfigContext';
 
 interface HeroesContextType {
   heroes: OwnedHeroCard[];
@@ -79,6 +80,8 @@ function generateStarterHeroes(): OwnedHeroCard[] {
  */
 export function HeroesProvider({ children }: { children: React.ReactNode }) {
   const { account } = useAccount();
+  const { heroProgression: heroCfg } = useGameConfig();
+  const heroCfgRef = useRef(heroCfg);
   const accountId = account?.accountId || 'guest';
 
   const [heroes, setHeroes] = useState<OwnedHeroCard[]>(() => {
@@ -109,6 +112,8 @@ export function HeroesProvider({ children }: { children: React.ReactNode }) {
     const stored = localStorage.getItem(`${ACTIVE_DECK_KEY_PREFIX}${accountId}`);
     return stored || null;
   });
+
+  useEffect(() => { heroCfgRef.current = heroCfg; }, [heroCfg]);
 
   // PRIORITY 2: Debounced localStorage writes to prevent excessive updates
   useEffect(() => {
@@ -218,11 +223,12 @@ export function HeroesProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const awardXpToHeroes = useCallback((instanceIds: string[], xpAmount: number) => {
+    const cfg = heroCfgRef.current;
     setHeroes(prev =>
       prev.map(hero => {
         if (instanceIds.includes(hero.instanceId)) {
           const newXp = hero.xp + xpAmount;
-          const newLevel = Math.min(50, Math.floor(1 + newXp / 100));
+          const newLevel = Math.min(cfg.maxLevel, Math.floor(1 + newXp / cfg.xpPerLevel));
           return { ...hero, xp: newXp, level: newLevel };
         }
         return hero;
@@ -316,10 +322,11 @@ export function HeroesProvider({ children }: { children: React.ReactNode }) {
       const target = prev.find(h => h.instanceId === targetInstanceId);
       if (!target) return prev;
 
-      const newForgeTier = Math.min(3, (target.forgeTier || 0) + 1);
-      const newXp = target.xp + 150;
-      const newLevel = Math.min(50, Math.floor(1 + newXp / 100));
-      const newNftEligible = newForgeTier >= 2 && newLevel >= 5;
+      const cfg = heroCfgRef.current;
+      const newForgeTier = Math.min(cfg.maxForgeTier, (target.forgeTier || 0) + 1);
+      const newXp = target.xp + cfg.forgeXpBonus;
+      const newLevel = Math.min(cfg.maxLevel, Math.floor(1 + newXp / cfg.xpPerLevel));
+      const newNftEligible = newForgeTier >= cfg.nftEligibleForgeTier && newLevel >= cfg.nftEligibleLevel;
 
       return prev
         .filter(h => !sacrificeIds.includes(h.instanceId))

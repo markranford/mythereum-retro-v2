@@ -1,5 +1,6 @@
 import { BattleCard, BattleDeck, Battle } from '../types/battle';
 import { OwnedHeroCard } from '../types/heroes';
+import { CombatConfig } from '../types/gameConfig';
 import { CARD_LIBRARY } from './mockData';
 
 /**
@@ -223,7 +224,7 @@ export function initializeBattle(deck1: BattleDeck, deck2: BattleDeck): Battle {
  * Returns new battle state with combat results.
  * Never mutates input battle state.
  */
-export function simulateBattleRound(battle: Battle): Battle {
+export function simulateBattleRound(battle: Battle, combatConfig?: CombatConfig): Battle {
   // Deep copy to prevent mutation - CRITICAL for React state integrity
   const next = deepCloneBattle(battle);
   
@@ -256,8 +257,10 @@ export function simulateBattleRound(battle: Battle): Battle {
   const defender1 = deck2Cards[Math.floor(Math.random() * deck2Cards.length)];
 
   const baseDmg1 = attacker1.attack;
-  const mitigated1 = Math.max(0, baseDmg1 - Math.floor(defender1.defense / 2));
-  const dmg1 = Math.max(1, mitigated1);
+  const mitDiv = combatConfig?.damageMitigationDivisor ?? 2;
+  const minDmg = combatConfig?.minimumDamage ?? 1;
+  const mitigated1 = Math.max(0, baseDmg1 - Math.floor(defender1.defense / mitDiv));
+  const dmg1 = Math.max(minDmg, mitigated1);
 
   const defIdx1 = next.deck2.cards.findIndex(c => c.instanceId === defender1.instanceId);
   let defender1Destroyed = false;
@@ -293,8 +296,8 @@ export function simulateBattleRound(battle: Battle): Battle {
     const defender2 = liveDeck1[Math.floor(Math.random() * liveDeck1.length)];
 
     const baseDmg2 = attacker2.attack;
-    const mitigated2 = Math.max(0, baseDmg2 - Math.floor(defender2.defense / 2));
-    dmg2 = Math.max(1, mitigated2);
+    const mitigated2 = Math.max(0, baseDmg2 - Math.floor(defender2.defense / mitDiv));
+    dmg2 = Math.max(minDmg, mitigated2);
     attacker2Name = attacker2.name;
     defender2Name = defender2.name;
 

@@ -28,6 +28,8 @@ import ProfilePage from './pages/ProfilePage';
 import ProfileSettingsPage from './pages/ProfileSettingsPage';
 import NotificationsPage from './pages/NotificationsPage';
 import AdminBalancerLabPage from './pages/AdminBalancerLabPage';
+import AdminGameConfigPage from './pages/AdminGameConfigPage';
+import { GameConfigProvider } from './context/GameConfigContext';
 import React from 'react';
 
 const rootRoute = createRootRoute({
@@ -100,6 +102,12 @@ const adminBalancerLabRoute = createRoute({
   component: AdminBalancerLabPage,
 });
 
+const adminGameConfigRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/admin/game-config',
+  component: AdminGameConfigPage,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   strongholdsRoute,
@@ -112,6 +120,7 @@ const routeTree = rootRoute.addChildren([
   profileSettingsRoute,
   notificationsRoute,
   adminBalancerLabRoute,
+  adminGameConfigRoute,
 ]);
 
 const router = createRouter({ routeTree });
@@ -278,6 +287,7 @@ export default function App() {
 
   return (
     <ErrorBoundary>
+      <GameConfigProvider>
       <AccountProvider>
         <EconomyProvider>
           <ProgressProvider>
@@ -297,6 +307,7 @@ export default function App() {
           </ProgressProvider>
         </EconomyProvider>
       </AccountProvider>
+      </GameConfigProvider>
     </ErrorBoundary>
   );
 }

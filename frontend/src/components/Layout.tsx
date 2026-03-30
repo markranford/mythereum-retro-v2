@@ -2,7 +2,7 @@ import { Outlet, Link, useLocation } from '@tanstack/react-router';
 import { useInternetIdentity } from '../hooks/useInternetIdentity';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button } from './ui/button';
-import { Sword, Castle, Users, Swords, Trophy, ShoppingBag, Hammer, User, Bell, FlaskConical } from 'lucide-react';
+import { Sword, Castle, Users, Swords, Trophy, ShoppingBag, Hammer, User, Bell, FlaskConical, Settings } from 'lucide-react';
 
 export default function Layout() {
   const { identity, login, clear, isLoggingIn } = useInternetIdentity();
@@ -42,6 +42,7 @@ export default function Layout() {
 
   const adminNavItems = [
     { path: '/admin/balancer-lab', label: 'Balancer Lab', icon: FlaskConical, badge: 'Dev' },
+    { path: '/admin/game-config', label: 'Game Config', icon: Settings, badge: 'Dev' },
   ];
 
   return (

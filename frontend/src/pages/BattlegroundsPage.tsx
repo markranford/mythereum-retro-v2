@@ -5,6 +5,7 @@ import { useHeroes } from '../context/HeroesContext';
 import { useEconomy } from '../context/EconomyContext';
 import { useTelemetry } from '../context/TelemetryContext';
 import { useProgress } from '../context/ProgressContext';
+import { useGameConfig } from '../context/GameConfigContext';
 import LayerGate from '../components/LayerGate';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Swords, Trophy, Plus, AlertCircle, Clock, Users, Target } from 'lucide-react';
@@ -50,6 +51,7 @@ function BattlegroundsContent() {
   const { identity } = useInternetIdentity();
   const { data: battles, isLoading: battlesLoading } = useGetAllBattleResults();
   
+  const { battleRewards: rewardsCfg } = useGameConfig();
   const heroesContext = useHeroes();
   const { earnMythex, earnResources } = useEconomy();
   const { recordBattleOutcome } = useTelemetry();
@@ -276,9 +278,9 @@ function BattlegroundsContent() {
 
       // PRIORITY 1 & 2: Batch all context updates together to minimize re-renders
       // Each context update is isolated and doesn't trigger other contexts
-      const xpAmount = victory ? 50 : 10;
-      const mythexReward = victory ? 50 : 10;
-      const resourceAmount = victory ? 25 : 5;
+      const xpAmount = victory ? rewardsCfg.victoryXp : rewardsCfg.defeatXp;
+      const mythexReward = victory ? rewardsCfg.victoryMythex : rewardsCfg.defeatMythex;
+      const resourceAmount = victory ? rewardsCfg.victoryResources : rewardsCfg.defeatResources;
 
       if (import.meta.env.DEV) {
         console.debug('[BattlegroundsPage] Reward calculation:', {

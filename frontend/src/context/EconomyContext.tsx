@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SoftWallet, ResourceAmount, EconomyTransaction } from '../types/economy';
 import { useAccount } from './AccountContext';
+import { useGameConfig } from './GameConfigContext';
 
 interface EconomyContextType {
   wallet: SoftWallet | null;
@@ -22,17 +23,17 @@ const STORAGE_KEY = 'retro-mythereum-economy-v1';
 const TRANSACTION_KEY = 'retro-mythereum-transactions-v1';
 const MAX_TRANSACTIONS = 100;
 
-function createInitialWallet(accountId: string): SoftWallet {
+function createInitialWallet(accountId: string, cfg?: { startingMythex: number; startingGold: number; startingStone: number; startingLumber: number; startingIron: number; startingFood: number; startingMana: number }): SoftWallet {
   return {
     accountId,
-    mythex: 1000, // Starting balance: 1000 Soft Mythex
+    mythex: cfg?.startingMythex ?? 1000,
     resources: {
-      gold: 200,
-      stone: 200,
-      lumber: 200,
-      iron: 200,
-      food: 200,
-      mana: 0,
+      gold: cfg?.startingGold ?? 200,
+      stone: cfg?.startingStone ?? 200,
+      lumber: cfg?.startingLumber ?? 200,
+      iron: cfg?.startingIron ?? 200,
+      food: cfg?.startingFood ?? 200,
+      mana: cfg?.startingMana ?? 0,
     },
     lastUpdated: Date.now(),
   };
@@ -50,6 +51,7 @@ function createInitialWallet(accountId: string): SoftWallet {
  */
 export function EconomyProvider({ children }: { children: React.ReactNode }) {
   const { account } = useAccount();
+  const { economyStarting: econCfg } = useGameConfig();
   const [wallet, setWallet] = useState<SoftWallet | null>(null);
   const [transactions, setTransactions] = useState<EconomyTransaction[]>([]);
   const [isInitialized, setIsInitialized] = useState(false);
@@ -108,7 +110,7 @@ export function EconomyProvider({ children }: { children: React.ReactNode }) {
             if (import.meta.env.DEV) {
               console.debug('[EconomyContext] Creating new wallet for account');
             }
-            const newWallet = createInitialWallet(account.accountId);
+            const newWallet = createInitialWallet(account.accountId, econCfg);
             setWallet(newWallet);
             
             // Save immediately
@@ -119,7 +121,7 @@ export function EconomyProvider({ children }: { children: React.ReactNode }) {
           console.error('[EconomyContext] Failed to parse stored wallet:', parseError);
           
           // Create fresh wallet
-          const newWallet = createInitialWallet(account.accountId);
+          const newWallet = createInitialWallet(account.accountId, econCfg);
           setWallet(newWallet);
           localStorage.setItem(STORAGE_KEY, JSON.stringify({ [account.accountId]: newWallet }));
         }
@@ -127,7 +129,7 @@ export function EconomyProvider({ children }: { children: React.ReactNode }) {
         if (import.meta.env.DEV) {
           console.debug('[EconomyContext] No stored wallet, creating new');
         }
-        const newWallet = createInitialWallet(account.accountId);
+        const newWallet = createInitialWallet(account.accountId, econCfg);
         setWallet(newWallet);
         localStorage.setItem(STORAGE_KEY, JSON.stringify({ [account.accountId]: newWallet }));
       }

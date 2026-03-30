@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { PlayerProgress, GameLayer, DEFAULT_UNLOCK_THRESHOLDS } from '../types/progression';
 import { useAccount } from './AccountContext';
+import { useGameConfig } from './GameConfigContext';
 
 interface ProgressContextType {
   progress: PlayerProgress | null;
@@ -43,6 +44,8 @@ function createInitialProgress(accountId: string): PlayerProgress {
  */
 export function ProgressProvider({ children }: { children: React.ReactNode }) {
   const { account } = useAccount();
+  const { progressionLayers: layerCfg } = useGameConfig();
+  const layerCfgRef = useRef(layerCfg);
   const [progress, setProgress] = useState<PlayerProgress | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
   const [initializationError, setInitializationError] = useState<string | null>(null);
@@ -64,6 +67,7 @@ export function ProgressProvider({ children }: { children: React.ReactNode }) {
   // Keep refs in sync with state
   useEffect(() => { progressRef.current = progress; }, [progress]);
   useEffect(() => { accountRef.current = account; }, [account]);
+  useEffect(() => { layerCfgRef.current = layerCfg; }, [layerCfg]);
 
   // Initialize or load progress when account changes - only once
   useEffect(() => {
@@ -101,10 +105,6 @@ export function ProgressProvider({ children }: { children: React.ReactNode }) {
                 maxLayer: accountProgress.maxLayerUnlocked,
                 battles: `${accountProgress.battlesWon}W/${accountProgress.battlesLost}L`,
               });
-            }
-            // Ensure all layers are unlocked
-            if (accountProgress.maxLayerUnlocked < 4) {
-              accountProgress.maxLayerUnlocked = 4;
             }
             setProgress(accountProgress);
           } else {
@@ -174,13 +174,30 @@ export function ProgressProvider({ children }: { children: React.ReactNode }) {
 
   // PRIORITY 2: All methods memoized with useCallback for stable references
   const isLayerUnlocked = useCallback((layer: GameLayer): boolean => {
-    if (!progress) return layer === 1;
-    return progress.maxLayerUnlocked >= layer;
+    if (layer === 1) return true; // Layer 1 always unlocked
+    if (!progress) return false;
+    const cfg = layerCfgRef.current;
+    if (layer === 2) return progress.heroesOwned >= cfg.layer2.heroesRequired;
+    if (layer === 3) return progress.heroesOwned >= cfg.layer3.heroesRequired && progress.battlesWon >= cfg.layer3.battlesWonRequired;
+    if (layer === 4) return progress.heroesOwned >= cfg.layer4.heroesRequired && progress.battlesWon >= cfg.layer4.battlesWonRequired && progress.tournamentsWon >= cfg.layer4.tournamentsWonRequired;
+    return false;
   }, [progress]);
 
   const getUnlockRequirements = useCallback((layer: GameLayer): string[] => {
-    // All layers are unlocked by default, so no requirements
-    return [];
+    const cfg = layerCfgRef.current;
+    const reqs: string[] = [];
+    if (layer === 2) {
+      if (cfg.layer2.heroesRequired > 0) reqs.push(`Own ${cfg.layer2.heroesRequired} heroes`);
+    } else if (layer === 3) {
+      if (cfg.layer3.heroesRequired > 0) reqs.push(`Own ${cfg.layer3.heroesRequired} heroes`);
+      if (cfg.layer3.battlesWonRequired > 0) reqs.push(`Win ${cfg.layer3.battlesWonRequired} battles`);
+    } else if (layer === 4) {
+      if (cfg.layer4.heroesRequired > 0) reqs.push(`Own ${cfg.layer4.heroesRequired} heroes`);
+      if (cfg.layer4.battlesWonRequired > 0) reqs.push(`Win ${cfg.layer4.battlesWonRequired} battles`);
+      if (cfg.layer4.tournamentsWonRequired > 0) reqs.push(`Win ${cfg.layer4.tournamentsWonRequired} tournaments`);
+    }
+    if (reqs.length === 0) reqs.push('No requirements — unlocked!');
+    return reqs;
   }, []);
 
   const registerHeroCount = useCallback((count: number) => {

@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Battle } from '../../types/battle';
 import { OwnedHeroCard } from '../../types/heroes';
 import { buildBattleDeck, buildAiDeck, initializeBattle, simulateBattleRound } from '../../lib/battleUtils';
+import { useGameConfig } from '../../context/GameConfigContext';
+import { CombatConfig } from '../../types/gameConfig';
 import { Button } from '../ui/button';
 import { Card, CardContent } from '../ui/card';
 import BattleLog from './BattleLog';
@@ -38,10 +40,14 @@ export default function GameBoard({
   battleId,
   timerDuration 
 }: GameBoardProps) {
+  const { combat: combatConfig } = useGameConfig();
+  const combatConfigRef = useRef<CombatConfig>(combatConfig);
+
   const [battle, setBattle] = useState<Battle | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  
+
   // Refs for stable state tracking
+  useEffect(() => { combatConfigRef.current = combatConfig; }, [combatConfig]);
   const battleEndedRef = useRef(false);
   const usedHeroIdsRef = useRef<string[]>([]);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -186,7 +192,7 @@ export default function GameBoard({
     
     setIsProcessing(true);
     
-    const nextBattle = simulateBattleRound(battle);
+    const nextBattle = simulateBattleRound(battle, combatConfigRef.current);
     setBattle(nextBattle);
     setIsProcessing(false);
     
@@ -228,7 +234,7 @@ export default function GameBoard({
           });
         }
         
-        const nextBattle = simulateBattleRound(prevBattle);
+        const nextBattle = simulateBattleRound(prevBattle, combatConfigRef.current);
         
         // Check game over in next tick to avoid state update during render
         setTimeout(() => {
