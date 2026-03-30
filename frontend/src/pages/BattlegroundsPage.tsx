@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useInternetIdentity } from '../hooks/useInternetIdentity';
-import { useGetAllBattleResults } from '../hooks/useQueries';
+import { useGetAllBattleResults, useSubmitAiBattleResult } from '../hooks/useQueries';
 import { useHeroes } from '../context/HeroesContext';
 import { useEconomy } from '../context/EconomyContext';
 import { useTelemetry } from '../context/TelemetryContext';
@@ -56,6 +56,7 @@ function BattlegroundsContent() {
   const { earnMythex, earnResources } = useEconomy();
   const { recordBattleOutcome } = useTelemetry();
   const { registerBattleResult } = useProgress();
+  const submitAiBattle = useSubmitAiBattleResult();
   
   // Tab management
   const [activeTab, setActiveTab] = useState<string>('waiting');
@@ -344,6 +345,19 @@ function BattlegroundsContent() {
         console.debug('[BattlegroundsPage] Battle rewards granted successfully - Phase: Complete');
       }
 
+      // Context update 6: Record battle on-chain (fire-and-forget, local rewards already granted)
+      submitAiBattle.mutate(victory, {
+        onSuccess: (onChainId) => {
+          if (import.meta.env.DEV) {
+            console.debug('[BattlegroundsPage] Battle recorded on-chain, ID:', onChainId?.toString());
+          }
+        },
+        onError: (err) => {
+          // Non-blocking: local rewards were already granted, on-chain is best-effort
+          console.warn('[BattlegroundsPage] Failed to record battle on-chain:', err);
+        },
+      });
+
       // PRIORITY 1: Move battle tab to finished after delay - decoupled from context updates
       // Guard: skip if user already manually closed the tab (Return to Lobby)
       setTimeout(() => {
@@ -367,7 +381,7 @@ function BattlegroundsContent() {
       console.error('[BattlegroundsPage] Error completing battle:', err);
       setError('Failed to process battle results. Rewards may not have been granted.');
     }
-  }, [heroesContext.awardXpToHeroes, earnMythex, earnResources, recordBattleOutcome, registerBattleResult]);
+  }, [heroesContext.awardXpToHeroes, earnMythex, earnResources, recordBattleOutcome, registerBattleResult, submitAiBattle]);
 
   /**
    * PRIORITY 1: Stable callback with useCallback - Close battle tab and cleanup.
@@ -554,31 +568,49 @@ function BattlegroundsContent() {
                 </div>
               ) : battles && battles.length > 0 ? (
                 <div className="space-y-3">
-                  {battles.slice(0, 10).map((battle) => (
-                    <Card key={battle.id.toString()} className="bg-slate-800/60 border-amber-500/30 backdrop-blur-sm">
-                      <CardContent className="py-4">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-4">
-                            <Swords className="w-5 h-5 text-amber-400" />
-                            <div className="text-amber-200/70 text-sm">
-                              Battle #{battle.id.toString()}
+                  {battles.slice(0, 20).map((battle) => {
+                    const playerPrincipal = identity?.getPrincipal()?.toString();
+                    const isAiBattle = battle.player2.toString() === '2vxsx-fae';
+                    const isVictory = playerPrincipal && battle.winner.toString() === playerPrincipal;
+
+                    return (
+                      <Card key={battle.id.toString()} className={`border backdrop-blur-sm ${isVictory ? 'bg-green-950/40 border-green-600/40' : 'bg-red-950/40 border-red-600/40'}`}>
+                        <CardContent className="py-4">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                              <Swords className="w-5 h-5 text-amber-400" />
+                              <div>
+                                <div className="text-amber-200 text-sm font-semibold">
+                                  Battle #{battle.id.toString()}
+                                </div>
+                                <div className="text-amber-200/50 text-xs">
+                                  {isAiBattle ? 'vs AI Opponent' : `vs ${battle.player2.toString().slice(0, 12)}...`}
+                                </div>
+                              </div>
+                            </div>
+                            <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm font-bold ${isVictory ? 'bg-green-600/30 text-green-300' : 'bg-red-600/30 text-red-300'}`}>
+                              {isVictory ? (
+                                <>
+                                  <Trophy className="w-4 h-4" />
+                                  Victory
+                                </>
+                              ) : (
+                                <>
+                                  <Swords className="w-4 h-4" />
+                                  Defeat
+                                </>
+                              )}
                             </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <Trophy className="w-4 h-4 text-amber-400" />
-                            <span className="text-amber-400 font-semibold">
-                              Winner: {battle.winner.toString().slice(0, 8)}...
-                            </span>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="text-center py-12">
                   <Trophy className="w-16 h-16 text-amber-400/50 mx-auto mb-4" />
-                  <p className="text-amber-200/70">No battles recorded yet. Start your first match!</p>
+                  <p className="text-amber-200/70">No battles recorded on-chain yet. Win your first match!</p>
                 </div>
               )}
             </CardContent>

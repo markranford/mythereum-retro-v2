@@ -143,6 +143,7 @@ export interface backendInterface {
     joinTournament(tournamentId: bigint): Promise<void>;
     recordBattle(player1: Principal, player2: Principal, winner: Principal): Promise<bigint>;
     removeCard(cardId: bigint): Promise<void>;
+    submitAiBattleResult(victory: boolean): Promise<bigint>;
     saveCallerUserProfile(profile: UserProfile): Promise<void>;
     spendMythex(amount: bigint): Promise<void>;
     spendResources(gold: bigint, stone: bigint, lumber: bigint, iron: bigint, food: bigint, mana: bigint): Promise<void>;

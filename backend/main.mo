@@ -1086,6 +1086,67 @@ persistent actor Main {
     id;
   };
 
+  // User-facing method: any authenticated user can submit their own AI battle result.
+  // Records the battle on-chain and grants rewards to the caller's wallet.
+  public shared ({ caller }) func submitAiBattleResult(victory : Bool) : async Nat {
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Debug.trap("Unauthorized: Only registered users can submit battle results");
+    };
+
+    // Use a well-known "AI" principal (anonymous = 2vxsx-fae)
+    let aiPrincipal = Principal.fromText("2vxsx-fae");
+    let winner = if (victory) { caller } else { aiPrincipal };
+
+    let id = nextBattleId;
+    nextBattleId += 1;
+
+    let result : BattleResult = {
+      id;
+      player1 = caller;
+      player2 = aiPrincipal;
+      winner;
+      timestamp = 0;
+    };
+
+    battleResults := natMap.put(battleResults, id, result);
+
+    // Grant rewards to the caller's wallet (create wallet if needed)
+    let mythexReward = if (victory) { 50 } else { 10 };
+    let resourceReward = if (victory) { 25 } else { 5 };
+
+    switch (principalMap.get(softWallets, caller)) {
+      case (?wallet) {
+        let updated : SoftWallet = {
+          owner = wallet.owner;
+          mythex = wallet.mythex + mythexReward;
+          gold = wallet.gold + resourceReward;
+          stone = wallet.stone + resourceReward;
+          lumber = wallet.lumber + resourceReward;
+          iron = wallet.iron + resourceReward;
+          food = wallet.food + resourceReward;
+          mana = wallet.mana;
+        };
+        softWallets := principalMap.put(softWallets, caller, updated);
+      };
+      case null {
+        // Auto-create wallet with rewards as starting balance
+        let newWallet : SoftWallet = {
+          owner = caller;
+          mythex = mythexReward;
+          gold = resourceReward;
+          stone = resourceReward;
+          lumber = resourceReward;
+          iron = resourceReward;
+          food = resourceReward;
+          mana = 0;
+        };
+        softWallets := principalMap.put(softWallets, caller, newWallet);
+      };
+    };
+
+    id;
+  };
+
   public query ({ caller }) func getBattleResult(id : Nat) : async ?BattleResult {
     // SECURITY: Battle results contain strategic information about player performance
     // Only allow viewing battles where caller participated or admin viewing any battle

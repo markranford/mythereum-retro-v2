@@ -199,6 +199,27 @@ export function useRecordBattle() {
   });
 }
 
+/**
+ * Submit an AI battle result to the canister.
+ * Records the battle on-chain and grants on-chain wallet rewards.
+ * Falls back gracefully if the canister call fails (local rewards already granted).
+ */
+export function useSubmitAiBattleResult() {
+  const { actor } = useActor();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (victory: boolean) => {
+      if (!actor) throw new Error('Actor not available');
+      return actor.submitAiBattleResult(victory);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['battleResults'] });
+      queryClient.invalidateQueries({ queryKey: ['myPlayerAccount'] });
+    },
+  });
+}
+
 // Tournament Queries
 export function useGetAllTournaments() {
   const { actor, isFetching } = useActor();
